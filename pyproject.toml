@@ -1,0 +1,26 @@
+[project]
+name = "paper-bot"
+version = "0.1.0"
+description = "Paper trading bot (Alpaca) - MA crossover + RSI, dựng lại từ bài Medium của Anil Gaddam"
+readme = "README.md"
+authors = [
+    { name = "bao292005", email = "bao292005@users.noreply.github.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "alpaca-py>=0.45.0",
+    "pandas>=3.1.1",
+    "python-dotenv>=1.2.4",
+]
+
+[project.scripts]
+paper-bot = "paper_bot:main"
+
+[build-system]
+requires = ["uv_build>=0.9.26,<0.10.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+]
