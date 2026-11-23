@@ -8,6 +8,16 @@ from dotenv import load_dotenv
 
 DEFAULT_SYMBOLS = ["AAPL", "GOOGL", "MSFT", "TSLA", "NVDA"]
 
+# Tập mã cho backtest (xem docs/prereg-danh-gia.md). Có survivorship bias - đã ghi nhận.
+UNIVERSE_50 = [
+    "AAPL", "MSFT", "AMZN", "GOOGL", "META", "NVDA", "JPM", "JNJ", "V", "PG",
+    "XOM", "UNH", "HD", "MA", "BAC", "KO", "PEP", "CVX", "ABBV", "MRK",
+    "PFE", "WMT", "CSCO", "INTC", "ORCL", "ADBE", "CRM", "NFLX", "DIS", "T",
+    "VZ", "CMCSA", "NKE", "MCD", "COST", "LLY", "TMO", "ABT", "DHR", "HON",
+    "UNP", "CAT", "BA", "GS", "MS", "IBM", "QCOM", "TXN", "AMGN", "LOW",
+]
+BENCHMARK = "SPY"
+
 
 @dataclass
 class TradingConfig:

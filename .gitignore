@@ -12,3 +12,6 @@ wheels/
 # Bí mật + log
 .env
 *.log
+
+# Dữ liệu cache + DB (tải lại được)
+data/

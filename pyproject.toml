@@ -9,8 +9,15 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "alpaca-py>=0.45.0",
+    "chronos-forecasting>=2.3.2",
+    "einops>=0.8.2",
+    "openai>=3.57.0",
     "pandas>=3.1.1",
     "python-dotenv>=1.2.4",
+    "safetensors>=0.8.0",
+    "scikit-learn>=1.9.1",
+    "streamlit>=1.67.0",
+    "torch>=2.15.0",
 ]
 
 [project.scripts]
@@ -19,6 +26,9 @@ paper-bot = "paper_bot:main"
 [build-system]
 requires = ["uv_build>=0.9.26,<0.10.0"]
 build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [dependency-groups]
 dev = [
