@@ -43,27 +43,36 @@ def build_signal_table(symbols=None, use_forecast: bool = False, start: str = TA
     rows = []
     for sym in symbols:
         t0 = time.time()
-        bars = load_bars(sym, end=end)
-        close = bars["close"]
-        for i in range(MIN_BARS, len(bars)):
-            date = bars.index[i]
-            if date < pd.Timestamp(start):
-                continue
-            window = bars.iloc[max(0, i + 1 - FEATURE_WINDOW):i + 1]  # nến <= date
-            state = MarketState(sym, date, window, regime=str(regimes.get(date, "unknown")))
-            if use_forecast:
-                state.forecast = get_forecast(fc_table, sym, date)
-            for strat in strategies:
-                for sig in strat.generate_from_state(state):
-                    y = make_label(close, i, sig.action)
-                    if y is None:
-                        continue  # chưa có giá t+5 trong vùng cho phép
-                    row = signal_features(sig, state, use_forecast)
-                    row.update(date=date, label_date=bars.index[i + HORIZON], symbol=sym,
-                               strategy=sig.strategy, action=sig.action, regime=state.regime, y=y)
-                    rows.append(row)
+        rows += symbol_rows(sym, load_bars(sym, end=end), regimes, strategies,
+                            fc_table, use_forecast, start)
         logger.info(f"{sym}: xong sau {time.time() - t0:.1f}s, tổng {len(rows)} tín hiệu")
     return pd.DataFrame(rows)
+
+
+def symbol_rows(sym, bars, regimes, strategies, fc_table=None, use_forecast=False, start=None):
+    """Các dòng tín hiệu (feature + nhãn) của 1 mã, CHỈ từ `bars` được đưa vào.
+    Nhãn cần giá t+5 trong `bars` -> tín hiệu ở 5 phiên cuối bị bỏ (không nhìn ra ngoài bars)."""
+    rows = []
+    close = bars["close"]
+    start = pd.Timestamp(start) if start is not None else None
+    for i in range(MIN_BARS, len(bars)):
+        date = bars.index[i]
+        if start is not None and date < start:
+            continue
+        window = bars.iloc[max(0, i + 1 - FEATURE_WINDOW):i + 1]  # nến <= date
+        state = MarketState(sym, date, window, regime=str(regimes.get(date, "unknown")))
+        if use_forecast and fc_table is not None:
+            state.forecast = get_forecast(fc_table, sym, date)
+        for strat in strategies:
+            for sig in strat.generate_from_state(state):
+                y = make_label(close, i, sig.action)
+                if y is None:
+                    continue  # chưa có giá t+5 trong vùng cho phép
+                row = signal_features(sig, state, use_forecast)
+                row.update(date=date, label_date=bars.index[i + HORIZON], symbol=sym,
+                           strategy=sig.strategy, action=sig.action, regime=state.regime, y=y)
+                rows.append(row)
+    return rows
 
 
 def walk_forward_windows(start: str = EVAL_START, end: str = DATA_END,

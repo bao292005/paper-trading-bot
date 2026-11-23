@@ -18,23 +18,25 @@ P1 Tiên (DataManager) --MarketState--> P2 Lanh (Strategy) --Signal--> P3 Mfan (
 | P1 | Cache lịch sử 10 năm (UNIVERSE_50 + SPY) | ✅ 51 mã × 2723 phiên, SIP | `data/cache.py`, `scripts/fetch_history.py` |
 | P1 | Adapter: alpaca-py (giữ `get_historical_data`), stream, News | ✅ (News chỉ có từ 2026-04) | `data/sources.py` |
 | P1 | Regime detector + features (atr14, vol20, rsi14...) | ✅ | `data/regime.py`, `data/features.py` |
-| P1 | Forecast quantile: naive / Chronos-Bolt / Kronos | ✅ code; ⏳ đánh giá pinball | `data/forecast.py` |
-| P1 | Tính sẵn forecast Chronos 2018-07→2024-12 | ⏳ | `scripts/precompute_forecasts.py` |
-| P1 | `get_market_state()` → MarketState | ⏳ | |
+| P1 | Forecast quantile: naive / Chronos-Bolt / Kronos | ✅ (không mô hình nào hơn naive) | `data/forecast.py`, [ket-qua/forecast-eval.md](ket-qua/forecast-eval.md) |
+| P1 | Tính sẵn forecast Chronos 2018-07→2024-12 (83k dòng) | ✅ | `scripts/precompute_forecasts.py` |
+| P1 | `build_market_state()` → MarketState | ✅ | `data/market_state.py` |
 | P2 | Bọc MA/RSI/Bollinger gốc thành StateStrategy | ✅ | `decision/base.py` |
 | P2 | Regime switching | ✅ | `decision/regime_switch.py` |
 | P2 | Gom tín hiệu mâu thuẫn + rule veto | ✅ | `decision/aggregate.py`, `decision/veto.py` |
 | P2 | Xác suất hiệu chỉnh (walk-forward) | ✅ (không hơn base rate) | `decision/calibration.py`, [ket-qua/calibration.md](ket-qua/calibration.md) |
 | P2 | LLMAgentStrategy (4 agent, chỉ forward, test bằng LLM giả) | ✅ code; chờ key | `decision/llm_agent.py` |
 | P2 | DecisionPipeline: tín hiệu → veto → hiệu chỉnh → gộp → lọc | ✅ | `decision/pipeline.py` |
-| P2 | Policy FULL có cờ tắt từng thành phần (cho ablation) | ⏳ đang làm | `decision/full_policy.py` |
+| P2 | Policy FULL có cờ tắt từng thành phần (cho ablation) | ✅ | `decision/full_policy.py` |
+| P4/P2 | Bảng ablation giai đoạn phát triển | ✅ FULL thua B2 | `scripts/run_ablation.py`, [ket-qua/ablation-dev.md](ket-qua/ablation-dev.md) |
 | P3 | Sizing theo ATR + độ bất định forecast, mức SL/TP, giới hạn tương quan | ✅ 37 test | `risk.py` |
 | P3 | Bracket order, kill switch, đối soát | ✅ commit 99c7c31 | `execution.py` |
 | P4 | Engine backtest (chống rò rỉ, phí, khớp open t+1, SL/TP) | ✅ 13 test | `backtest/engine.py` |
 | P4 | Metrics, baseline B0/B1/B2, walk-forward 12 cửa sổ, ablation | ✅ | `backtest/` |
 | P4 | Kết quả baseline 2019–2024 | ✅ | [ket-qua/baseline-dev.md](ket-qua/baseline-dev.md) |
 | P4 | Bảng ablation + chạy HOLDOUT 1 lần | ⏳ | |
-| P4 | Dashboard Streamlit + log vào DB | ⏳ | |
+| P4 | Dashboard Streamlit (5 trang) + ghi kết quả backtest vào DB | ✅ | `dashboard.py`, `backtest/report.py` |
+| P4 | Tăng tốc B2 (70–260 giây → 8–10 giây, kết quả giống hệt) | ✅ | `backtest/baselines.py` |
 | — | Ghép tất cả vào `TradingBot` (giữ lệnh `once/loop/report` cũ) | ⏳ | |
 | — | Alpaca MCP | ❌ bỏ (theo quyết định 2026-11-23) | |
 
@@ -134,3 +136,54 @@ Walk-forward 2019-01 → 2024-12, 51 mã, phí 10 bps. Chưa đụng tới holdo
   - Toàn bộ lập luận được lưu để giải thích.
 - **DecisionPipeline:** sinh tín hiệu → veto → hiệu chỉnh → gộp → lọc ngưỡng.
 - Tổng: 177 test pass.
+
+### 2026-11-24 — P1 đánh giá dự báo + P4 dashboard (commit 9c0afd8)
+- **Dự báo 5 ngày** trên 2019–2024, đo bằng pinball loss (càng thấp càng tốt), so với naive:
+  - **Chronos:** tệ hơn naive 2,1% trên 50 mã (có ý nghĩa thống kê, t = −2,89).
+  - **Kronos:** loss gấp **2,27 lần** naive. Median lệch âm có hệ thống: dự báo −2%, thực tế +0,3%.
+  - Kết luận trung thực: **dự báo giá cổ phiếu theo ngày bằng foundation model không hơn đoán ngây thơ**. Hệ thống FULL vẫn dùng Chronos, chủ yếu để lấy độ rộng q90−q10 làm thước đo bất định khi định cỡ vị thế. Ablation sẽ cho biết phần này có giúp gì không.
+- **MarketState:** có test chống rò rỉ; tin đăng sau 16:00 giờ New York bị loại.
+- **Dashboard:** chạy bằng `uv run streamlit run src/paper_bot/dashboard.py`. Gồm 5 trang:
+  - Equity & drawdown (so nhiều run)
+  - Lệnh / fill
+  - Tín hiệu (kèm lý do, xác suất, veto)
+  - Sự kiện (kill switch, đối soát)
+  - Báo cáo
+- **Tăng tốc B2:** đối chiếu với bản cũ, 3188/3188 fill khớp. Lúc đối chiếu còn bắt được một lỗi so sánh số thực (MA10 = MA30 đúng bằng nhau), đã sửa.
+- Sửa `.gitignore`: dòng `data/` từng chặn nhầm cả code `src/paper_bot/data/`.
+- Tổng: **178 test pass** (Jarvis tự chạy lại để kiểm chứng).
+
+### 2026-11-24 — P2: so với tỷ lệ gốc theo hướng + policy FULL
+- So thêm với cách đoán "tỷ lệ thắng riêng cho BUY và SELL": Brier mô hình **0,2491**, cách đoán này **0,2454**, nên **mô hình thua**.
+  - Lợi thế duy nhất của bộ hiệu chỉnh đến từ việc biết lệnh là BUY hay SELL. Các feature khác (RSI, MA, regime...) không thêm thông tin.
+  - Kết luận viết tay: [ket-qua/calibration-ketluan.md](ket-qua/calibration-ketluan.md).
+- `decision/full_policy.py`: policy FULL có **6 cờ**, mỗi cờ tắt một thành phần để chạy ablation.
+  - Có test chống rò rỉ: sửa dữ liệu tương lai không làm đổi lệnh quá khứ.
+- **Phát hiện khi chạy thử:** bật hiệu chỉnh với ngưỡng 0,5 thì bot gần như không giao dịch. Xác suất của SELL chỉ ~0,3–0,45 nên lệnh thoát vị thế bị lọc hết.
+  - **Quyết định (Jarvis): ngưỡng chỉ áp cho lệnh VÀO (BUY).** Tín hiệu bán khi đang nắm vị thế luôn được thực hiện, vì thoát vị thế là giảm rủi ro.
+  - Quyết định này đưa ra trên giai đoạn phát triển, trước khi có bất kỳ kết quả ablation nào.
+- Tổng: 183 test pass.
+
+### 2026-11-24 — Bảng ablation, giai đoạn phát triển 2019–2024 (agent j-p2)
+Chạy 47 phút. Chưa phải kết quả chính thức: holdout chưa chạy.
+
+| Cấu hình | Sharpe | CAGR | MaxDD | Bỏ đi thì Sharpe đổi |
+|---|---|---|---|---|
+| **FULL** | **0,12** | 0,6% | −16,3% | — |
+| bỏ bracket/stop | 0,72 | 6,4% | −16,5% | **+0,60** |
+| bỏ regime switching | 0,46 | 3,5% | −13,0% | +0,34 |
+| bỏ forecast | 0,39 | 2,9% | −19,0% | +0,27 |
+| bỏ sizing ATR | 0,26 | 0,2% | −2,0% | +0,14 |
+| bỏ hiệu chỉnh xác suất | 0,25 | 1,5% | −17,5% | +0,13 |
+| bỏ giới hạn tương quan | 0,12 | 0,6% | −14,8% | 0,00 |
+| B0 SPY / B1 chia đều / B2 bot gốc | 0,92 / 0,99 / 0,65 | | | |
+
+- **FULL thua bot gốc B2** và còn xa mục tiêu 0,85.
+- Bỏ thành phần nào cũng làm Sharpe **tăng** hoặc giữ nguyên. Theo prereg, không thành phần nào "có giá trị".
+- Sai số Sharpe trên 6 năm vào khoảng ±0,4. Vì vậy chỉ hai kết luận tương đối chắc:
+  - bracket/stop gây hại rõ (+0,60 khi bỏ);
+  - FULL thua B2.
+
+  Các chênh lệch 0,1–0,3 còn lại có thể chỉ là nhiễu.
+- Bài học: thêm nhiều thành phần "thông minh" không tự động làm bot tốt hơn. Mỗi thành phần phải được đo riêng, và bảng ablation là công cụ làm việc đó.
+- Tổng: 185 test pass (Jarvis tự chạy lại).
