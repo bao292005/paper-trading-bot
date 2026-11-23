@@ -51,5 +51,10 @@ Kết quả so với B0/B1 phải báo cáo trung thực, kể cả khi thua. Th
 Từng thành phần được coi là **có giá trị** nếu bỏ nó đi (ablation) làm Sharpe trên giai đoạn phát triển giảm ≥ 0,1.
 Thành phần không đạt mức này vẫn được giữ trong báo cáo, nhưng bị ghi là "không chứng minh được giá trị".
 
+## Sửa đổi
+- **2026-11-23 (trước khi có bất kỳ kết quả backtest nào):** Alpaca News chỉ có tin từ khoảng 2026-04 (P1 kiểm tra thực tế).
+  Vì vậy tin tức **không** dùng trong backtest 2019–2024 hay holdout. Mọi thành phần dựa trên tin tức (LLMAgentStrategy)
+  chỉ được đánh giá ở giai đoạn forward. Dữ liệu giá: 51 mã đủ 2016-01-04 → 2026-10-30, feed SIP, Adjustment.ALL.
+
 ## 8. Ablation (bảng bắt buộc)
 FULL; FULL bỏ forecast; FULL bỏ regime switching; FULL bỏ hiệu chỉnh xác suất; FULL bỏ sizing ATR (dùng sizing gốc); FULL bỏ bracket/stop; FULL bỏ giới hạn tương quan; B2.

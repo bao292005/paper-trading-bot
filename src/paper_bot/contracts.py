@@ -85,7 +85,10 @@ class Signal(TradingSignal):
 
 @dataclass
 class OrderIntent:
-    """Đầu ra của P3 trước khi gửi broker (hoặc backtest engine)."""
+    """Đầu ra của P3 trước khi gửi broker (hoặc backtest engine).
+
+    Quy ước SELL: qty <= 0 hoặc qty >= số đang nắm -> đóng TOÀN BỘ vị thế;
+    0 < qty < số đang nắm -> bán một phần (dùng khi cân bằng lại danh mục)."""
     symbol: str
     side: str  # "buy" | "sell"
     qty: int
