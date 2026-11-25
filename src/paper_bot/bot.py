@@ -26,7 +26,27 @@ def setup_logging() -> logging.Logger:
     return logging.getLogger("paper_bot")
 
 
+class DryRunOrderManager:
+    """Thay OrderManager khi --dry-run: chỉ ghi log, KHÔNG gửi lệnh lên broker."""
+
+    def __init__(self, logger: logging.Logger):
+        self.logger = logger
+        self.orders = []  # lệnh dự kiến (để xem/kiểm thử)
+
+    def place_market_order(self, symbol: str, qty: int, side: str) -> bool:
+        self.orders.append((symbol, qty, side))
+        self.logger.info(f"[DRY-RUN] sẽ đặt market {side} {qty} {symbol} (không gửi)")
+        return True
+
+    def place_limit_order(self, symbol: str, qty: int, side: str, limit_price: float) -> bool:
+        self.orders.append((symbol, qty, side))
+        self.logger.info(f"[DRY-RUN] sẽ đặt limit {side} {qty} {symbol} @{limit_price} (không gửi)")
+        return True
+
+
 class TradingBot:
+    """Engine "legacy": bot gốc của bài (MA + RSI qua managers.py), giữ nguyên để so sánh/lùi lại."""
+
     def __init__(self, config: TradingConfig):
         self.config = config
         self.logger = setup_logging()
@@ -36,9 +56,13 @@ class TradingBot:
 
         self.data_manager = DataManager(data_client)
         self.portfolio_manager = PortfolioManager(self.trading_client, config)
-        self.order_manager = OrderManager(self.trading_client)
+        if config.dry_run:
+            self.order_manager = DryRunOrderManager(self.logger)
+        else:
+            self.order_manager = OrderManager(self.trading_client)
         self.strategies = [MovingAverageCrossoverStrategy(), RSIStrategy()]
-        self.logger.info(f"Bot khởi tạo (PAPER), chiến lược: {[s.name for s in self.strategies]}")
+        mode = "DRY-RUN" if config.dry_run else "PAPER"
+        self.logger.info(f"Bot legacy khởi tạo ({mode}), chiến lược: {[s.name for s in self.strategies]}")
 
     def is_market_open(self) -> bool:
         return self.trading_client.get_clock().is_open

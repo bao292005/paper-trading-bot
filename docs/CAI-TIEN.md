@@ -37,7 +37,8 @@ P1 Tiên (DataManager) --MarketState--> P2 Lanh (Strategy) --Signal--> P3 Mfan (
 | P4 | Bảng ablation + chạy HOLDOUT 1 lần | ⏳ | |
 | P4 | Dashboard Streamlit (5 trang) + ghi kết quả backtest vào DB | ✅ | `dashboard.py`, `backtest/report.py` |
 | P4 | Tăng tốc B2 (70–260 giây → 8–10 giây, kết quả giống hệt) | ✅ | `backtest/baselines.py` |
-| — | Ghép tất cả vào `TradingBot` (giữ lệnh `once/loop/report` cũ) | ⏳ | |
+| — | Ghép tất cả vào `TradingBot` (giữ lệnh `once/loop/report` cũ, thêm `--engine full\|legacy`, `--dry-run`, `--disable`) | ✅ (chưa có tín hiệu thật nào để thử đặt lệnh) | `live.py`, `bot.py`, [cai-tien/TICH-HOP.md](cai-tien/TICH-HOP.md) |
+| — | Chạy HOLDOUT 2025-01 → 2026-10 (1 lần) | ⏳ chờ chốt cấu hình | |
 | — | Alpaca MCP | ❌ bỏ (theo quyết định 2026-11-23) | |
 
 ## Nhật ký thay đổi
@@ -187,3 +188,22 @@ Chạy 47 phút. Chưa phải kết quả chính thức: holdout chưa chạy.
   Các chênh lệch 0,1–0,3 còn lại có thể chỉ là nhiễu.
 - Bài học: thêm nhiều thành phần "thông minh" không tự động làm bot tốt hơn. Mỗi thành phần phải được đo riêng, và bảng ablation là công cụ làm việc đó.
 - Tổng: 185 test pass (Jarvis tự chạy lại).
+
+### 2026-11-25 — Ghép vào TradingBot (agent j-int)
+- `--engine full` (mặc định) chạy `LiveBot` trong `live.py`, nối toàn bộ P1 → P2 → P3 → DB. `--engine legacy` là bot gốc của bài, code không đổi.
+  - Các lệnh cũ `once`, `loop`, `report`, `--symbols` vẫn giữ nguyên.
+- Lệnh mới:
+  - `--dry-run`: chạy đủ các bước, ghi DB, **không gửi hay huỷ lệnh nào**; có test chứng minh.
+  - `--disable <thành phần>`
+  - `--llm`
+  - `--reset-kill-switch`
+- **Nhất quán với backtest:** chỉ dùng nến ngày đã đóng; bộ hiệu chỉnh chỉ học tới `calib_end = 2024-12-31` cho tới khi chạy holdout.
+- **Vận hành thật:**
+  - kill switch có trạng thái lưu trong `data/live_state.json`;
+  - đối soát lệnh với broker khi khởi động;
+  - đồng bộ lệnh đã khớp vào DB;
+  - lỗi một mã hoặc lỗi mạng không làm sập `loop`;
+  - mọi tín hiệu, lệnh, equity, sự kiện ghi vào DB (`live-paper` / `live-dry`) nên dashboard xem được.
+- **Chạy thật dry-run** (2026-11-25, AAPL/MSFT/NVDA): fit bộ hiệu chỉnh, tải Chronos, dùng nến tới 2026-11-24. Không mã nào có tín hiệu nên 0 lệnh. DB ghi equity và sự kiện đúng.
+- Luồng 13 bước của engine full: [quy-trinh.md](quy-trinh.md), phần A.
+- Tổng: **219 test pass** (Jarvis tự chạy lại).

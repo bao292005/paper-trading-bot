@@ -2,7 +2,7 @@
 
 import os
 from dataclasses import dataclass, field
-from typing import List
+from typing import Dict, List
 
 from dotenv import load_dotenv
 
@@ -18,6 +18,18 @@ UNIVERSE_50 = [
 ]
 BENCHMARK = "SPY"
 
+ENGINES = ("full", "legacy")
+# Cờ bật/tắt từng thành phần, trùng tên với decision/full_policy.DEFAULT_FLAGS.
+# (Không import full_policy ở đây để tránh import vòng: full_policy import config.)
+FEATURE_FLAGS = ("use_regime", "use_calibration", "use_forecast",
+                 "use_atr_sizing", "use_bracket", "use_corr_limit")
+# Tên ngắn dùng cho CLI: --disable bracket regime ...
+SHORT_FLAG_NAMES = tuple(f.removeprefix("use_") for f in FEATURE_FLAGS)
+
+
+def default_flags() -> Dict[str, bool]:
+    return {f: True for f in FEATURE_FLAGS}
+
 
 @dataclass
 class TradingConfig:
@@ -28,6 +40,25 @@ class TradingConfig:
     min_confidence: float = 0.5  # ngưỡng confidence trung bình để vào lệnh
     history_days: int = 100  # số ngày dữ liệu lịch sử
     symbols: List[str] = field(default_factory=lambda: list(DEFAULT_SYMBOLS))
+    # --- phần ghép bot ---
+    engine: str = "full"  # "full" = pipeline mới | "legacy" = bot gốc của bài
+    flags: Dict[str, bool] = field(default_factory=default_flags)
+    dry_run: bool = False  # True = làm mọi bước nhưng KHÔNG gửi lệnh lên broker
+    use_llm: bool = False  # bật LLMAgentStrategy (cần LLM_API_KEY)
+    # Mốc cuối dữ liệu fit calibrator: giữ "2024-12-31" (trước HOLDOUT) tới khi chạy holdout xong;
+    # sau đó đổi sang "yesterday" (= hôm qua theo giờ New York).
+    calib_end: str = "2024-12-31"
+
+    def disable(self, names) -> None:
+        """Tắt các thành phần theo tên ngắn ("bracket") hoặc tên đầy đủ ("use_bracket")."""
+        for name in names:
+            flag = name if name.startswith("use_") else f"use_{name}"
+            if flag not in FEATURE_FLAGS:
+                raise ValueError(f"thành phần lạ: {name} (hợp lệ: {', '.join(SHORT_FLAG_NAMES)})")
+            self.flags[flag] = False
+
+    def disabled(self) -> List[str]:
+        return [f for f, on in self.flags.items() if not on]
 
     @classmethod
     def from_env(cls) -> "TradingConfig":
