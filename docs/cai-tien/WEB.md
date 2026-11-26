@@ -1,5 +1,44 @@
 # Nhật ký web app (agent j-web)
 
+## Trang /tester kiểu MT5 Strategy Tester (agent j-webt, 2026-11-26)
+
+### Bước 1 – API + job runner
+- File: `web/jobs.py` (JobManager: thread nền, tối đa 2 job chạy cùng lúc -> 429, job xong tự dọn sau 1 giờ,
+  lỗi của tester được bắt thành chuỗi `error`), `web/api/tester.py`, `app.py` (thêm router, `state.jobs`, route `GET /tester`).
+- Endpoint: `GET /api/tester/options`, `POST /api/tester/run`, `POST /api/tester/optimize`,
+  `GET /api/tester/jobs/{id}` (status running|done|error, progress {done,total}, result), `POST /api/tester/save`.
+- An toàn: chỉ đọc + tính toán, không đặt lệnh. POST qua `guard` (Origin/Host, X-Requested-With, JSON) dùng lại của orders.
+  Kiểm tra input: mã thuộc UNIVERSE_50 + SPY (≤ 20), ngày 2019-01-01..2024-12-31 (>= 2025 -> 400 giải thích HOLDOUT),
+  số trong khoảng hợp lý (bool/chuỗi bị từ chối), ma_short < ma_long, cờ chỉ thuộc FEATURE_FLAGS,
+  lưới 1..3 tham số trong whitelist và ≤ 500 tổ hợp. B2_goc bỏ qua atr_stop_mult/take_profit_mult (chỉ FULL có).
+- Không ghi DB trừ `/save`: tên `[a-z0-9-]{1,40}`, run_id `bt-tester-<tên>`, dựng lại equity + fills từ curve/replay của job rồi gọi `save_result`.
+- Test: `tests/test_web_tester.py` (34: job -> poll, tối ưu có tiến độ, input sai 4xx, holdout 400, lưới > 500, Origin lạ 403,
+  tối đa 2 job, TTL, lưu DB, không ghi DB khi không bấm lưu) + `tests/test_web_tester_real.py` (run_tester thật 2 mã, 6 tháng 2019, B2).
+
+### Bước 2 – Trang /tester: cài đặt, báo cáo, đồ thị, lệnh
+- File: `templates/tester.html`, `static/tester.css`, `static/js/tester_{form,job,report,chart,trades,main}.js` (mỗi file ≤ 150 dòng,
+  có test kiểm tra), nút "Strategy Tester" ở thanh trên của "/" và link "← Biểu đồ" ở /tester.
+- Form: chiến lược, mode, ngày (ghi chú vì sao tối đa 2024-12-31), fill model, deposit, phí, ≤ 20 mã, tham số, rủi ro, 6 cờ (FULL).
+  B2_goc tự khoá ATR stop / take profit / cờ. Trình duyệt kiểm tra trước, server kiểm tra lại.
+- Start -> POST job -> poll mỗi 0,6 s (thanh tiến độ). Báo cáo MT5 2 cột; đồ thị Balance (xanh dương) + Equity (xanh lá) + drawdown (pane dưới);
+  bảng lệnh sắp xếp được, xuất CSV (chặn formula-injection), "Lưu vào DB" gọi `/api/tester/save`.
+- Kế thừa: `/api/bars`, `chartTheme`, `api.js` (getJSON/sendJSON/fmt/esc), Lightweight Charts v5.3.0 có sẵn.
+
+### Bước 3 – Visual mode
+- File: `tester_replay.js` (phát lại: Play/Pause/Step, tốc độ 1x/5x/20x/max, thanh trượt), `tester_visual.js` (nến ngày + markers + đường SL/TP + equity nhỏ),
+  `tester_minute.js` (bấm 1 lệnh trong bảng -> khung nến 5m ngày vào/ra, giờ New York, kèm giá vào/ra/SL/TP).
+- Nến ngày lấy qua `/api/bars` (tf=1D) trong đúng khoảng from..to của run nên không đụng holdout. Dữ liệu phát lại lấy từ `result.replay`.
+- Test bằng node + DOM giả (`tests/test_web_tester_js.py`): bước phát lại, markers, đường SL/TP.
+
+### Bước 4 – Tab Optimization
+- File: `tester_opt.js` (form + chạy job), `tester_opt_view.js` (hiển thị). Chọn 1–3 tham số (B2_goc ẩn ATR/TP), nhập danh sách `5,10,15`
+  hoặc dãy `đầu:bước:cuối`, đếm tổ hợp trực tiếp, khoá nút Start nếu > 500. Tiêu chí: sharpe | net_profit | profit_factor | recovery_factor.
+- Kết quả: bảng xếp hạng IS và OOS (hạng + chỉ số), dòng tốt nhất theo IS được tô và hiện hạng OOS của nó, heatmap IS | OOS (lưới div, 2 tham số đầu),
+  khung cảnh báo overfit luôn hiện. Bấm 1 dòng -> chạy run_tester đầy đủ với tham số đó (ngày theo panel Cài đặt) và mở tab Báo cáo.
+- Optimization luôn dùng IS 2019–2022 / OOS 2023–2024 cố định phía server, ngày trong Cài đặt không áp dụng (ghi rõ trong khung cảnh báo).
+- Test: `tests/test_web_tester_js.py` (9: parseValues đúng/sai, render bảng + heatmap + best + note), `tests/test_web_tester_page.py` (id JS có trong HTML).
+- Hạn chế: chưa thử trong trình duyệt thật (chỉ node + TestClient); nến phút cần cache nến phút; heatmap chỉ 2 tham số đầu; tối ưu nhiều mã/50 tổ hợp có thể chạy lâu.
+
 ## Bước 4 – Đặt/huỷ lệnh paper + nút chạy bot (2026-11-26)
 - Backend mới: `web/api/order_rules.py` (guard + kiểm tra đầu vào, hàm thuần), `web/api/orders.py`
   (`POST /api/orders`, `DELETE /api/orders/{id}`, `POST /api/bot/run`), đăng ký trong `app.py`.

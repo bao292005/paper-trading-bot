@@ -9,8 +9,9 @@ from fastapi.staticfiles import StaticFiles
 
 from .. import dashboard
 from ..data.intraday import load_intraday
-from .api import live, markers, market, orders, trading
+from .api import live, markers, market, orders, tester, trading
 from .hub import LiveHub, ny_now
+from .jobs import JobManager
 
 WEB_DIR = Path(__file__).resolve().parent
 
@@ -31,6 +32,7 @@ def create_app(load_intraday_fn=None, trading_client_fn=None, db_path=None,
     state.trading_client = None  # tạo lười ở lần gọi đầu
     state.db_path = db_path or dashboard.DB_PATH
     state.bars_dir = bars_dir
+    state.jobs = JobManager(max_running=2, ttl=3600)  # job tester chạy nền (tối đa 2, dọn sau 1 giờ)
 
     def default_seed(symbol):  # nến phút hôm nay, để nến khung lớn đang chạy có đủ phần đã qua
         today = ny_now().normalize()
@@ -38,12 +40,16 @@ def create_app(load_intraday_fn=None, trading_client_fn=None, db_path=None,
 
     state.live_hub = LiveHub(adapter_factory or live.make_stream_adapter, seed_fn or default_seed)
 
-    for module in (market, trading, orders, markers, live):
+    for module in (market, trading, orders, markers, live, tester):
         app.include_router(module.router)
 
     @app.get("/", include_in_schema=False)
     def index():
         return FileResponse(WEB_DIR / "templates" / "index.html")
+
+    @app.get("/tester", include_in_schema=False)
+    def tester_page():
+        return FileResponse(WEB_DIR / "templates" / "tester.html")
 
     app.mount("/static", StaticFiles(directory=WEB_DIR / "static"), name="static")
     return app

@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Paper trading - Strategy Tester</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/tester.css">
+</head>
+<body>
+  <header id="toolbar">
+    <a class="navlink" href="/">&larr; Biểu đồ</a>
+    <b>Strategy Tester</b>
+    <span class="muted small">Chỉ đọc dữ liệu và tính toán, không đặt lệnh. Dữ liệu tới 2024-12-31.</span>
+  </header>
+
+  <main id="t-main">
+    <aside id="t-left">
+      <section class="card">
+        <h3>Cài đặt</h3>
+        <div class="form-grid">
+          <label>Chiến lược
+            <select id="s-strategy"><option value="B2_goc">B2_goc (bot gốc)</option><option value="FULL">FULL</option></select></label>
+          <label>Mode
+            <select id="s-mode"><option value="single">single</option><option value="walkforward">walkforward</option></select></label>
+          <label>Từ ngày <input id="s-from" type="date" value="2019-01-01" min="2019-01-01" max="2024-12-31"></label>
+          <label>Đến ngày <input id="s-to" type="date" value="2024-12-31" min="2019-01-01" max="2024-12-31"></label>
+        </div>
+        <div class="small muted" id="date-note"></div>
+        <label class="stacked">Fill model
+          <select id="s-fill"><option value="daily_ohlc">Nến ngày (OHLC)</option><option value="minute">Nến phút (chính xác hơn)</option></select></label>
+        <div class="form-grid">
+          <label>Deposit ($) <input id="s-deposit" type="number" value="100000" min="1000" max="10000000" step="1000"></label>
+          <label>Phí (bps) <input id="s-cost" type="number" value="10" min="0" max="100" step="1"></label>
+        </div>
+      </section>
+      <section class="card"><h3>Mã (<span id="sym-count">0</span>/20)</h3>
+        <div class="small"><button class="mini" id="sym-10">10 mã đầu</button> <button class="mini" id="sym-clear">Bỏ chọn</button></div>
+        <div id="s-symbols"></div></section>
+      <section class="card"><h3>Tham số chiến lược</h3><div id="f-params" class="form-grid"></div></section>
+      <section class="card"><h3>Tham số rủi ro</h3><div id="f-risk" class="form-grid"></div>
+        <div class="small muted" id="risk-note"></div></section>
+      <section class="card" id="flags-card"><h3>Thành phần (FULL)</h3><div id="f-flags"></div></section>
+      <section class="card">
+        <button id="btn-start" class="primary wide">Start</button>
+        <div id="run-bar" class="bar" hidden><i></i></div>
+        <div id="run-msg" class="small"></div>
+      </section>
+    </aside>
+
+    <section id="t-right">
+      <nav id="t-tabs">
+        <button data-tab="report" class="active">Báo cáo</button><button data-tab="chart">Đồ thị</button>
+        <button data-tab="trades">Lệnh</button><button data-tab="visual">Visual</button>
+        <button data-tab="opt">Optimization</button>
+      </nav>
+      <div class="t-pane" id="pane-report"><div id="report-box" class="muted pad">Chưa có kết quả. Chọn cài đặt rồi bấm Start.</div></div>
+      <div class="t-pane" id="pane-chart" hidden>
+        <div class="legend-line"><span style="color:#2962ff">&#9632; Balance</span> <span style="color:#26a69a">&#9632; Equity</span>
+          <span style="color:#ef5350">&#9632; Drawdown % (pane dưới)</span></div>
+        <div id="bal-chart" class="chart-box"></div></div>
+      <div class="t-pane" id="pane-trades" hidden>
+        <div class="pad trade-tools">
+          <button id="btn-csv" class="mini">Xuất CSV</button>
+          <span class="muted small">Lưu vào DB (run_id bt-tester-&lt;tên&gt;):</span>
+          <input id="save-name" placeholder="ten-a-z0-9-" maxlength="40" pattern="[a-z0-9-]+">
+          <button id="btn-save" class="mini">Lưu vào DB</button> <span id="save-msg" class="small"></span>
+        </div>
+        <div id="trades-box" class="pad"></div></div>
+      <div class="t-pane vis-pane" id="pane-visual" hidden>
+        <div class="vis-bar">
+          <label>Mã <select id="v-symbol"></select></label>
+          <button id="v-play" class="mini">&#9654; Play</button>
+          <button id="v-step" class="mini">Step &#9654;|</button>
+          <label>Tốc độ <select id="v-speed"><option value="1">1x</option><option value="5">5x</option>
+            <option value="20">20x</option><option value="max">max</option></select></label>
+          <input id="v-slider" type="range" min="0" max="0" value="0">
+          <span id="v-date" class="small"></span>
+        </div>
+        <div id="v-info" class="small muted vis-info">Chạy một kết quả (Start) rồi chọn mã để phát lại từng nến ngày.</div>
+        <div class="vis-wrap">
+          <div id="v-chart"></div>
+          <div id="v-eq"></div>
+          <div id="v-min" class="card" hidden>
+            <div class="vis-bar"><b id="vm-title"></b>
+              <button id="vm-entry" class="mini">Ngày vào</button><button id="vm-exit" class="mini">Ngày ra</button>
+              <button id="vm-close" class="mini">Đóng</button><span id="vm-msg" class="small"></span></div>
+            <div id="vm-chart"></div>
+          </div>
+        </div>
+      </div>
+      <div class="t-pane pad" id="pane-opt" hidden>
+        <div class="warn-box"><b>Cảnh báo overfit:</b> <span id="o-note">Chọn tham số trên dữ liệu này rồi đánh giá lại trên cùng
+          dữ liệu là overfit; kết quả chỉ có giá trị khi kiểm tra trên holdout một lần.</span>
+          IS = 2019-01-01..2022-12-31 (để chọn), OOS = 2023-01-01..2024-12-31 (để kiểm tra). Ngày trong panel Cài đặt không áp dụng cho tối ưu.</div>
+        <div class="small muted">Giá trị: danh sách <code>5,10,15</code> hoặc dãy <code>đầu:bước:cuối</code> (vd <code>5:5:25</code>). Tối đa 3 tham số, 500 tổ hợp.
+          Mã, chiến lược, phí, deposit lấy từ panel Cài đặt.</div>
+        <div class="opt-params">
+          <label>Tham số 1 <select id="o-p1"></select></label><input id="o-v1" placeholder="5:5:25">
+          <label>Tham số 2 <select id="o-p2"></select></label><input id="o-v2" placeholder="20,30,40">
+          <label>Tham số 3 <select id="o-p3"></select></label><input id="o-v3" placeholder="(tuỳ chọn)">
+        </div>
+        <div class="trade-tools">
+          <label>Tiêu chí xếp hạng <select id="o-crit"></select></label>
+          <button id="btn-opt" class="primary" disabled>Start tối ưu</button>
+          <span id="o-count" class="small"></span>
+        </div>
+        <div id="o-bar" class="bar" hidden><i></i></div>
+        <div id="o-msg" class="small"></div>
+        <div id="o-best" class="opt-bestbox" hidden></div>
+        <div id="o-heat" class="opt-heat"></div>
+        <div class="small muted">Bấm một dòng trong bảng để chạy đầy đủ tổ hợp đó và xem Báo cáo.</div>
+        <div id="o-table" class="opt-table"></div>
+      </div>
+    </section>
+  </main>
+
+  <script src="/static/vendor/lightweight-charts.standalone.production.js"></script>
+  <script src="/static/js/api.js"></script>
+  <script src="/static/js/tester_form.js"></script>
+  <script src="/static/js/tester_job.js"></script>
+  <script src="/static/js/tester_report.js"></script>
+  <script src="/static/js/tester_chart.js"></script>
+  <script src="/static/js/tester_trades.js"></script>
+  <script src="/static/js/tester_replay.js"></script>
+  <script src="/static/js/tester_visual.js"></script>
+  <script src="/static/js/tester_minute.js"></script>
+  <script src="/static/js/tester_opt_view.js"></script>
+  <script src="/static/js/tester_opt.js"></script>
+  <script src="/static/js/tester_main.js"></script>
+</body>
+</html>

@@ -39,6 +39,8 @@ P1 Tiên (DataManager) --MarketState--> P2 Lanh (Strategy) --Signal--> P3 Mfan (
 | P4 | Tăng tốc B2 (70–260 giây → 8–10 giây, kết quả giống hệt) | ✅ | `backtest/baselines.py` |
 | — | Ghép tất cả vào `TradingBot` (giữ lệnh `once/loop/report` cũ, thêm `--engine full\|legacy`, `--dry-run`, `--disable`) | ✅ (chưa có tín hiệu thật nào để thử đặt lệnh) | `live.py`, `bot.py`, [cai-tien/TICH-HOP.md](cai-tien/TICH-HOP.md) |
 | — | UI Streamlit 4 trang (Pipeline, Đánh giá, Giám sát, Điều khiển) | ✅ | `ui/`, [cai-tien/UI.md](cai-tien/UI.md) |
+| — | Web app kiểu TradingView (nến 1m–1D realtime, markers bot, đặt lệnh paper) | ✅ | `web/`, [cai-tien/WEB.md](cai-tien/WEB.md) |
+| — | Strategy Tester kiểu MT5 (báo cáo, visual replay, fill nến phút, tối ưu IS/OOS) | ✅ | `backtest/tester/`, `web/` trang `/tester`, [cai-tien/TESTER.md](cai-tien/TESTER.md) |
 | — | Chạy HOLDOUT 2025-01 → 2026-10 (1 lần) | ⏳ chờ chốt cấu hình | |
 | — | Alpaca MCP | ❌ bỏ (theo quyết định 2026-11-23) | |
 
@@ -230,3 +232,30 @@ Chạy: `uv run streamlit run src/paper_bot/ui/app.py`
   - Chốt chặn cuối ngay trước subprocess.
   - Có test cho 7 cách xác nhận sai và các input độc (`AAPL;`, `$(rm)`...).
 - Tổng: **307 test pass** (Jarvis tự chạy lại). Server đã trả HTTP 200 cho cả 5 trang. Nút chạy thật chưa được bấm thử.
+
+### 2026-11-26 — Web app kiểu TradingView + Strategy Tester kiểu MT5 (agent j-web, j-web2, j-tester, j-webt)
+Chạy: `uv run python -m paper_bot.web` → http://127.0.0.1:8600 (chỉ localhost)
+
+- **Trang `/` – biểu đồ:** dùng thư viện TradingView Lightweight Charts v5.3.0 (Apache-2.0), chép vào `static/vendor`.
+  - Nến 1m / 5m / 15m / 1h / 1D, volume, MA10/30/200, RSI; kéo về quá khứ thì tự tải thêm.
+  - **Realtime** qua đúng 1 stream Alpaca (feed IEX), tự kết nối lại.
+  - Marker tín hiệu bot (tooltip ghi lý do, xác suất, veto) và fill; đường giá vào, SL/TP, lệnh chờ.
+  - Panel tài khoản, vị thế, lệnh chờ.
+  - **Đặt lệnh, huỷ lệnh, chạy bot:** phải gõ `XAC NHAN`; kiểm tra Origin, header và JSON; ghi sự kiện vào DB trước khi gửi.
+- **Nến phút:** `data/intraday.py` tải từ Alpaca theo nhu cầu, cache theo tháng trong `data/bars_1m/`.
+- **Lõi tester** (`backtest/tester/`):
+  - Báo cáo MT5: profit factor, expected payoff, recovery factor, drawdown theo balance và equity, chuỗi thắng/thua...
+  - `run_tester` trả về báo cáo, đường cong, danh sách lệnh và replay.
+  - Khớp SL/TP bằng nến phút. Với SL/TP 2/3 × ATR không có ngày nào mơ hồ, nên giả định "SL chạm trước" không làm lệch kết quả.
+  - Tối ưu tham số: tối đa 500 tổ hợp, in-sample 2019–2022 / out-of-sample 2023–2024. Chạm holdout thì bị chặn.
+  - CLI: `scripts/tester.py`.
+- **Demo tối ưu MA** ([ket-qua/tester-optimize-demo.md](ket-qua/tester-optimize-demo.md)): tổ hợp tốt nhất in-sample là 10/30, cũng là mặc định cũ. Các tổ hợp sát nhau, hạng in-sample và out-of-sample tương quan yếu, Sharpe out-of-sample ~3 là ảo vì vị thế quá nhỏ. Kết luận: **không đổi tham số**.
+- **Trang `/tester`:**
+  - Cài đặt; job chạy nền có theo dõi tiến độ.
+  - Tab Báo cáo / Đồ thị balance-equity / Lệnh (xuất CSV).
+  - **Visual mode:** play, pause, step, tốc độ; marker, SL/TP, equity chạy theo; click một lệnh để xem nến 5m của ngày đó.
+  - **Optimization:** bảng IS/OOS, heatmap, cảnh báo overfit luôn hiện.
+- **Jarvis kiểm chứng trên server thật:**
+  - Job bot gốc (3 mã, 2019–2024): 0,8 giây, 100 lệnh, PF 2,21, Sharpe 0,57.
+  - Ngày holdout → 400; POST đặt lệnh thiếu xác nhận → 403.
+- Tổng: **498 test pass**. Chưa thử bằng mắt trên trình duyệt; nút đặt lệnh thật chưa bấm.
