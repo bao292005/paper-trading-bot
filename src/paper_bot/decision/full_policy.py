@@ -21,10 +21,10 @@ from typing import Dict, List, Optional
 
 import pandas as pd
 
-from ..config import BENCHMARK
+from ..config import BENCHMARK, asset_profile
 from ..contracts import MarketState, OrderIntent
 from ..data.cache import load_bars
-from ..data.forecast import get_forecast, load_forecasts
+from ..data.forecast import CRYPTO_FORECAST_PATH, get_forecast, load_forecasts
 from ..data.regime import regime_series
 from ..risk import RiskConfig, legacy_position_size, make_order_intent
 from ..strategies import MovingAverageCrossoverStrategy, RSIStrategy
@@ -82,8 +82,10 @@ def make_full_policy_factory(flags: Optional[dict] = None, risk_cfg: Optional[Ri
                              spy_bars: Optional[pd.DataFrame] = None, symbols=None,
                              min_score: float = 0.5, calib_method: str = "isotonic",
                              calib_cache: Optional[dict] = None,
-                             strategy_params: Optional[dict] = None):
-    """strategy_params: tuỳ chọn, chỉnh MA/RSI (khoá trong DEFAULT_STRATEGY_PARAMS). None = như cũ.
+                             strategy_params: Optional[dict] = None, asset: str = "stock"):
+    """asset: "stock" (như cũ, benchmark SPY không giao dịch) | "crypto" (benchmark BTC/USD vừa
+      tính regime vừa được giao dịch, median vol 365 ngày, RiskConfig/forecast/cache của crypto).
+    strategy_params: tuỳ chọn, chỉnh MA/RSI (khoá trong DEFAULT_STRATEGY_PARAMS). None = như cũ.
       Áp cho cả chiến lược giao dịch lẫn bảng tín hiệu fit calibrator.
     spy_bars: SPY để tính regime (None -> lấy từ view nếu có, không thì đọc cache tới 2024-12-31).
     symbols: mã được giao dịch (None -> mọi mã trong view trừ SPY).
@@ -95,22 +97,27 @@ def make_full_policy_factory(flags: Optional[dict] = None, risk_cfg: Optional[Ri
     if unknown:
         raise ValueError(f"flag lạ: {sorted(unknown)}")
     f = {**DEFAULT_FLAGS, **(flags or {})}
-    cfg = risk_cfg or RiskConfig()
+    prof = asset_profile(asset)
+    bench = prof["benchmark"]
+    # cổ phiếu: SPY chỉ để tính regime, không giao dịch; crypto: BTC/USD được giao dịch
+    mk = {"vol_lookback": prof["periods_per_year"], "skip": bench if asset == "stock" else None}
+    cfg = risk_cfg or RiskConfig.for_asset(asset)
     sp = _check_strategy_params(strategy_params)
 
     fc_table = None
     if f["use_forecast"]:
-        fc_table = forecasts if forecasts is not None else load_forecasts()
+        fc_path = CRYPTO_FORECAST_PATH if asset == "crypto" else None
+        fc_table = forecasts if forecasts is not None else load_forecasts(fc_path)
         if fc_table.empty:
             logger.warning("use_forecast=True nhưng không có bảng forecast -> forecast=None")
             fc_table = None
     spy_cache = {"df": spy_bars}
 
     def spy_upto(asof, view=None) -> pd.DataFrame:
-        if view is not None and BENCHMARK in view.symbols():
-            return view.bars(BENCHMARK)
+        if view is not None and bench in view.symbols():
+            return view.bars(bench)
         if spy_cache["df"] is None:
-            spy_cache["df"] = load_bars(BENCHMARK, end=DATA_END)
+            spy_cache["df"] = load_bars(bench, end=DATA_END, asset=asset)
         return _upto(spy_cache["df"], asof)
 
     def policy_factory(train_bars: Dict[str, pd.DataFrame]):
@@ -125,7 +132,7 @@ def make_full_policy_factory(flags: Optional[dict] = None, risk_cfg: Optional[Ri
                 calibrator = calib_cache[key]
             else:
                 calibrator = _fit_on_train(train_bars, spy_upto(train_end), fc_table, use_fc_feat,
-                                           calib_method, sp)
+                                           calib_method, sp, **mk)
                 if calib_cache is not None:
                     calib_cache[key] = calibrator
         if fc_table is not None and train_end is not None:
@@ -136,18 +143,20 @@ def make_full_policy_factory(flags: Optional[dict] = None, risk_cfg: Optional[Ri
         strategies = [_regime_strategy(sp)] if f["use_regime"] else _base_strategies(sp)
         # Ngưỡng của pipeline = 0 (áp cho cả 2 hướng); ngưỡng thật chỉ áp cho BUY trong policy
         pipe = DecisionPipeline(strategies, calibrator=calibrator, min_score=0.0)
-        return _make_policy(pipe, f, cfg, fc_table, ref_width, spy_upto, symbols, min_score)
+        return _make_policy(pipe, f, cfg, fc_table, ref_width, spy_upto, symbols, min_score, **mk)
 
     return policy_factory
 
 
-def _fit_on_train(train_bars, spy, fc_table, use_fc_feat, method, params=None):
-    """Bảng tín hiệu MA/RSI dựng CHỈ từ train_bars (nhãn t+5 cũng nằm trong train) -> calibrator."""
-    regimes = regime_series(spy) if len(spy) else pd.Series(dtype=object)
+def _fit_on_train(train_bars, spy, fc_table, use_fc_feat, method, params=None,
+                  vol_lookback: int = 252, skip: Optional[str] = BENCHMARK):
+    """Bảng tín hiệu MA/RSI dựng CHỈ từ train_bars (nhãn t+5 cũng nằm trong train) -> calibrator.
+    skip: mã benchmark không giao dịch (SPY); None (crypto) -> dùng mọi mã."""
+    regimes = regime_series(spy, vol_lookback) if len(spy) else pd.Series(dtype=object)
     strategies = [wrap_legacy(s) for s in _base_strategies(params)]
     rows = []
     for sym, bars in train_bars.items():
-        if sym == BENCHMARK or len(bars) == 0:
+        if sym == skip or len(bars) == 0:
             continue
         rows += symbol_rows(sym, bars, regimes, strategies, fc_table, use_fc_feat)
     table = pd.DataFrame(rows)
@@ -157,7 +166,7 @@ def _fit_on_train(train_bars, spy, fc_table, use_fc_feat, method, params=None):
     return fit_calibrator(table, method=method, use_forecast=use_fc_feat)
 
 
-REGIME_TAIL = 600  # đủ cho MA200 + median vol 252 phiên -> nhãn ngày cuối không đổi, nhanh hơn
+REGIME_TAIL = 600  # đủ cho MA200 + median vol 252 (crypto 365) phiên -> nhãn ngày cuối không đổi
 
 
 def _returns(view, syms: List[str], n: int) -> pd.DataFrame:
@@ -165,14 +174,15 @@ def _returns(view, syms: List[str], n: int) -> pd.DataFrame:
     return pd.DataFrame({s: view.bars(s)["close"].iloc[-(n + 1):].pct_change() for s in syms}).iloc[1:]
 
 
-def _make_policy(pipe, f, cfg, fc_table, ref_width, spy_upto, symbols, min_score):
+def _make_policy(pipe, f, cfg, fc_table, ref_width, spy_upto, symbols, min_score,
+                 vol_lookback: int = 252, skip: Optional[str] = BENCHMARK):
     def policy(asof, view, pf) -> List[OrderIntent]:
         spy = spy_upto(asof, view).iloc[-REGIME_TAIL:]
-        regime = str(regime_series(spy).iloc[-1]) if len(spy) else "unknown"
+        regime = str(regime_series(spy, vol_lookback).iloc[-1]) if len(spy) else "unknown"
         positions = {s: p.qty for s, p in pf.positions.items()}
         cash = pf.cash  # trừ dần khi đặt mua trong ngày
         sells, buys = [], []
-        for sym in (symbols or [s for s in view.symbols() if s != BENCHMARK]):
+        for sym in (symbols or [s for s in view.symbols() if s != skip]):
             bars = view.bars(sym)
             if bars.empty or bars.index[-1] != asof:
                 continue  # hôm nay mã không có phiên
@@ -198,7 +208,9 @@ def _make_policy(pipe, f, cfg, fc_table, ref_width, spy_upto, symbols, min_score
                 continue
             price = float(bars["close"].iloc[-1])
             if not f["use_atr_sizing"]:
-                intent.qty = legacy_position_size(cash, price)
+                intent.qty = legacy_position_size(cash, price, qty_decimals=cfg.qty_decimals)
+                if intent.qty <= 0:
+                    continue
             if not f["use_bracket"]:
                 intent.stop_loss = intent.take_profit = None
             cash -= intent.qty * price

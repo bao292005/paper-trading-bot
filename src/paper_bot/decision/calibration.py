@@ -74,6 +74,9 @@ def signal_features(sig: Signal, state: MarketState, use_forecast: bool = False)
         row[f"regime_{r}"] = float(state.regime == r)
     if use_forecast:
         fc = state.forecast
+        # forecast NaN (vd crypto thiếu context) -> coi như không có forecast
+        if fc is not None and not (np.isfinite(fc.median) and np.isfinite(fc.width)):
+            fc = None
         row["has_fc"] = float(fc is not None)
         row["fc_median_dir"] = fc.median * d if fc is not None else 0.0
         row["fc_width"] = fc.width if fc is not None else 0.0

@@ -4,6 +4,7 @@ B2 có tham số: baselines.make_b2 (chỉ đọc) cố định MA 10/30, RSI 14
 logic đó nhưng nhận tham số. Với tham số mặc định, lệnh giống hệt make_b2(fast=True) (có test).
 """
 
+import dataclasses
 import math
 from collections import defaultdict
 from typing import List
@@ -12,7 +13,7 @@ import pandas as pd
 
 from ...contracts import OrderIntent
 from ...decision.full_policy import DEFAULT_STRATEGY_PARAMS, make_full_policy_factory
-from ...risk import RiskConfig
+from ...risk import RiskConfig, legacy_position_size
 from ..baselines import _fast_ma, _fast_rsi
 
 STRATEGIES = ("B2_goc", "FULL")
@@ -26,7 +27,7 @@ def _check_keys(given: dict, allowed, what: str) -> None:
         raise ValueError(f"{what} lạ: {sorted(unknown)} (hợp lệ: {sorted(allowed)})")
 
 
-def make_b2_params(symbols, strategy_params=None, risk=None):
+def make_b2_params(symbols, strategy_params=None, risk=None, qty_decimals=None):
     """Policy B2 như make_b2 nhưng chỉnh được MA/RSI, ngưỡng, sizing.
 
     history_days mặc định = max(100, 1.5*ma_long + 20) ngày LỊCH: bài gốc lấy 100 ngày lịch
@@ -67,7 +68,10 @@ def make_b2_params(symbols, strategy_params=None, risk=None):
             held = pf.positions[s].qty if s in pf.positions else 0
             price = float(data["close"].iloc[-1])
             if action == "BUY" and held <= 0:
-                qty = max(1, int(min(cash * r["risk_per_trade"], r["max_position_size"]) / price))
+                qty = legacy_position_size(cash, price, r["risk_per_trade"], r["max_position_size"],
+                                           qty_decimals)  # crypto: số lẻ, có thể ra 0
+                if qty <= 0:
+                    continue
                 cash -= qty * price
                 orders.append(OrderIntent(s, "buy", qty, reason=sigs[0][1], asof=asof))
             elif action == "SELL" and held > 0:
@@ -77,21 +81,23 @@ def make_b2_params(symbols, strategy_params=None, risk=None):
 
 
 def make_factory(strategy: str, symbols, flags=None, strategy_params=None, risk=None,
-                 spy_bars=None, forecasts=None):
-    """policy_factory(train_bars) -> policy, dùng được cho cả single lẫn walk-forward."""
+                 spy_bars=None, forecasts=None, asset: str = "stock"):
+    """policy_factory(train_bars) -> policy, dùng được cho cả single lẫn walk-forward.
+    asset="crypto": RiskConfig theo prereg crypto, mua lẻ 6 chữ số."""
+    base = RiskConfig.for_asset(asset)
     if strategy == "B2_goc":
         if flags:
             raise ValueError("B2_goc không có flags")
-        policy = make_b2_params(symbols, strategy_params, risk)  # kiểm tra tham số ngay
+        policy = make_b2_params(symbols, strategy_params, risk, base.qty_decimals)  # kiểm tra ngay
         return lambda train_bars: policy
     if strategy == "FULL":
         sp = dict(strategy_params or {})
         min_score = sp.pop("min_score", 0.5)
         try:
-            cfg = RiskConfig(**(risk or {}))
+            cfg = dataclasses.replace(base, **(risk or {}))
         except TypeError as e:
             raise ValueError(f"risk (FULL) lạ: {e}") from None
         return make_full_policy_factory(flags, risk_cfg=cfg, forecasts=forecasts, spy_bars=spy_bars,
                                         symbols=list(symbols), min_score=min_score,
-                                        strategy_params=sp or None)
+                                        strategy_params=sp or None, asset=asset)
     raise ValueError(f"strategy phải thuộc {STRATEGIES}, nhận {strategy!r}")

@@ -13,6 +13,7 @@ from typing import Callable, Dict, List, Optional
 import pandas as pd
 
 from ..contracts import Fill, OrderIntent
+from ..risk import floor_qty
 
 logger = logging.getLogger("paper_bot")
 
@@ -105,7 +106,10 @@ Policy = Callable[[pd.Timestamp, View, Portfolio], List[OrderIntent]]
 
 class _Engine:
     def __init__(self, bars, cost_bps, initial_cash, store, fill_model="daily_ohlc",
-                 minute_loader=None):
+                 minute_loader=None, qty_decimals=None):
+        # qty_decimals=None: cổ phiếu (số nguyên, phí trả thêm bằng USD) - như cũ.
+        # qty_decimals=6: crypto mua lẻ; phí MUA trừ bằng coin nhận được (như Alpaca), phí BÁN trừ bằng USD.
+        self.qty_decimals = qty_decimals
         self.fill_model = fill_model
         self.minute_loader = minute_loader or default_minute_loader
         # ambiguous: số ngày mơ hồ; minute_sl/minute_tp: phân xử được bằng nến phút;
@@ -129,12 +133,32 @@ class _Engine:
         return fee
 
     def buy(self, intent: OrderIntent, price: float, day):
+        if self.qty_decimals is not None:
+            return self._buy_fractional(intent, price, day)
         # Không margin: giảm qty cho vừa tiền mặt (tính cả phí)
         qty = min(int(intent.qty), int(self.pf.cash / (price * (1 + self.cost))))
         if qty <= 0:
             return
         fee = self._record_fill(intent.symbol, "buy", qty, price, day)
         self.pf.cash -= qty * price + fee
+        self._add_position(intent, qty, price, day, fee)
+
+    def _buy_fractional(self, intent: OrderIntent, price: float, day):
+        """Crypto: trả qty*giá USD, nhận qty*(1 - phí) coin (phí trừ bằng đồng nhận được)."""
+        d = self.qty_decimals
+        qty = min(floor_qty(intent.qty, d), floor_qty(self.pf.cash / price, d))
+        received = floor_qty(qty * (1 - self.cost), d)
+        if received <= 0:
+            return
+        fee = (qty - received) * price  # giá trị phí quy ra USD
+        fill = Fill(f"bt-{len(self.fills) + 1}", intent.symbol, "buy", qty, price, day.to_pydatetime(), fee)
+        self.fills.append(fill)
+        if self.store is not None:
+            self.store.log_fill(fill)
+        self.pf.cash -= qty * price
+        self._add_position(intent, received, price, day, fee)
+
+    def _add_position(self, intent: OrderIntent, qty, price, day, fee):
         pos = self.pf.positions.get(intent.symbol)
         if pos is None:
             self.pf.positions[intent.symbol] = Position(qty, price, day, intent.stop_loss,
@@ -152,7 +176,9 @@ class _Engine:
         pos = self.pf.positions.get(symbol)
         if pos is None:
             return
-        qty = pos.qty if qty <= 0 or qty >= pos.qty else int(qty)
+        qty = pos.qty if qty <= 0 or qty >= pos.qty else floor_qty(qty, self.qty_decimals)
+        if qty <= 0:
+            return
         fee = self._record_fill(symbol, "sell", qty, price, day)
         self.pf.cash += qty * price - fee
         trade = self.open_trades[symbol]
@@ -161,8 +187,10 @@ class _Engine:
         self.trades.append(Trade(symbol, qty, trade.entry_date, pos.entry_price, day, price,
                                  reason, entry_fee + fee))
         pos.qty -= qty
+        if self.qty_decimals is not None:  # số lẻ: làm tròn để không còn "bụi" 1e-17
+            pos.qty = round(pos.qty, self.qty_decimals)
         trade.qty = pos.qty
-        if pos.qty == 0:
+        if pos.qty <= 0:
             del self.pf.positions[symbol]
             del self.open_trades[symbol]
 
@@ -177,7 +205,8 @@ class _Engine:
             if o.side == "buy":
                 self.buy(o, price, day)
             else:
-                self.sell(o.symbol, int(o.qty), price, day, "signal")
+                qty = int(o.qty) if self.qty_decimals is None else o.qty
+                self.sell(o.symbol, qty, price, day, "signal")
 
     def check_stops(self, day):
         """Kiểm tra stop-loss / take-profit trong ngày bằng high/low.
@@ -235,8 +264,11 @@ class _Engine:
 def run_backtest(bars: Dict[str, pd.DataFrame], start, end, policy: Policy,
                  initial_cash: float = 100_000.0, cost_bps: float = 10.0,
                  store=None, fill_model: str = "daily_ohlc",
-                 minute_loader=None) -> BacktestResult:
+                 minute_loader=None, qty_decimals: Optional[int] = None) -> BacktestResult:
     """Chạy backtest từ `start` tới `end` (gồm cả 2 đầu).
+
+    qty_decimals: None = cổ phiếu (số nguyên, như cũ). Số (vd 6) = crypto mua lẻ, làm tròn xuống
+      `qty_decimals` chữ số; phí mua trừ vào coin nhận được, phí bán trừ vào USD nhận được.
 
     fill_model: "daily_ohlc" (mặc định, như cũ) | "minute" (ngày SL & TP cùng trong biên độ thì
       xem nến phút cái nào chạm trước). minute_loader(symbol, day) -> DataFrame nến phút; None ->
@@ -254,7 +286,7 @@ def run_backtest(bars: Dict[str, pd.DataFrame], start, end, policy: Policy,
         raise ValueError(f"fill_model phải thuộc {FILL_MODELS}, nhận {fill_model!r}")
     if fill_model == "minute" and end >= pd.Timestamp("2025-01-01"):
         raise ValueError("fill_model='minute' không được tải nến phút của HOLDOUT (>= 2025-01-01)")
-    eng = _Engine(bars, cost_bps, initial_cash, store, fill_model, minute_loader)
+    eng = _Engine(bars, cost_bps, initial_cash, store, fill_model, minute_loader, qty_decimals)
     rows, pending = [], []
     for day in days:
         eng.execute_pending(pending, day)

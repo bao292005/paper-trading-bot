@@ -6,13 +6,14 @@ B2: bot gốc của bài báo (MA 10/30 + RSI 14, ngưỡng 0.5, sizing min(2% c
 """
 
 from collections import defaultdict
-from typing import List
+from typing import List, Optional
 
 import numpy as np
 import pandas as pd
 
 from ..config import BENCHMARK, UNIVERSE_50
 from ..contracts import OrderIntent
+from ..risk import floor_qty, legacy_position_size
 from ..strategies import MovingAverageCrossoverStrategy, RSIStrategy
 
 
@@ -21,20 +22,24 @@ def _has_bar_today(view, symbol, asof) -> bool:
     return not df.empty and df.index[-1] == asof
 
 
-def make_b0(symbol: str = BENCHMARK):
-    """B0: ngày đầu tiên có dữ liệu thì mua hết tiền vào `symbol`, rồi giữ."""
+def make_b0(symbol: str = BENCHMARK, qty_decimals: Optional[int] = None):
+    """B0: ngày đầu tiên có dữ liệu thì mua hết tiền vào `symbol`, rồi giữ.
+    qty_decimals=6 (crypto, C0): mua lẻ."""
     def policy(asof, view, pf) -> List[OrderIntent]:
         if symbol in pf.positions or not _has_bar_today(view, symbol, asof):
             return []
         price = float(view.bars(symbol)["close"].iloc[-1])
         # Engine tự giảm qty nếu open ngày sau cao hơn / không đủ tiền trả phí
-        return [OrderIntent(symbol, "buy", int(pf.cash / price), reason="B0 buy&hold", asof=asof)]
+        qty = floor_qty(pf.cash / price, qty_decimals)
+        return [OrderIntent(symbol, "buy", qty, reason="B0 buy&hold", asof=asof)]
     return policy
 
 
-def make_b1(symbols=None, cash_buffer: float = 0.005):
+def make_b1(symbols=None, cash_buffer: float = 0.005, qty_decimals: Optional[int] = None):
     """B1: chia đều equity cho các mã có dữ liệu, cân bằng lại ở close phiên đầu mỗi tháng.
-    Giữ lại `cash_buffer` (0.5%) tiền mặt để trả phí và chênh lệch giá open."""
+    Giữ lại `cash_buffer` (0.5%) tiền mặt để trả phí và chênh lệch giá open.
+    qty_decimals=6 (crypto, C1): mua lẻ, và chia cho TẤT CẢ mã (equity/5): mã thiếu nến hôm đó
+    thì phần của nó giữ nguyên (tiền mặt hoặc vị thế cũ), không dồn sang mã khác."""
     symbols = list(symbols or UNIVERSE_50)
     state = {"month": None}
 
@@ -46,12 +51,15 @@ def make_b1(symbols=None, cash_buffer: float = 0.005):
         live = [s for s in symbols if _has_bar_today(view, s, asof)]
         if not live:
             return []
-        target_value = pf.equity * (1 - cash_buffer) / len(live)
+        n = len(live) if qty_decimals is None else len(symbols)
+        target_value = pf.equity * (1 - cash_buffer) / n
         sells, buys = [], []
         for s in live:
             price = float(view.bars(s)["close"].iloc[-1])
             held = pf.positions[s].qty if s in pf.positions else 0
-            diff = int(target_value / price) - held
+            diff = floor_qty(target_value / price, qty_decimals) - held
+            if qty_decimals is not None:
+                diff = round(diff, qty_decimals)
             if diff < 0:
                 sells.append(OrderIntent(s, "sell", -diff, reason="B1 rebalance", asof=asof))
             elif diff > 0:
@@ -93,11 +101,13 @@ def _fast_rsi(c: np.ndarray, period: int = 14, oversold: float = 30, overbought:
 
 
 def make_b2(symbols=None, history_days: int = 100, min_confidence: float = 0.5,
-            risk_per_trade: float = 0.02, max_position_size: float = 1000.0, fast: bool = True):
+            risk_per_trade: float = 0.02, max_position_size: float = 1000.0, fast: bool = True,
+            qty_decimals: Optional[int] = None):
     """B2: lặp lại TradingBot.run_trading_cycle + execute_signal_group của bài gốc trên View.
 
     fast=True: tính MA/RSI bằng numpy (nhanh ~20 lần, cùng công thức, chỉ dùng dữ liệu <= asof).
     fast=False: gọi đúng các lớp chiến lược gốc (chậm, dùng để đối chiếu trong test).
+    qty_decimals=6 (crypto, C2): cỡ lệnh lẻ, không ép tối thiểu 1 coin.
     """
     symbols = list(symbols or UNIVERSE_50)
     strategies = [MovingAverageCrossoverStrategy(), RSIStrategy()]
@@ -134,7 +144,10 @@ def make_b2(symbols=None, history_days: int = 100, min_confidence: float = 0.5,
             held = pf.positions[s].qty if s in pf.positions else 0
             price = float(data["close"].iloc[-1])
             if action == "BUY" and held <= 0:
-                qty = max(1, int(min(cash * risk_per_trade, max_position_size) / price))
+                qty = legacy_position_size(cash, price, risk_per_trade, max_position_size,
+                                           qty_decimals)
+                if qty <= 0:
+                    continue
                 cash -= qty * price
                 orders.append(OrderIntent(s, "buy", qty, reason=reason, asof=asof))
             elif action == "SELL" and held > 0:

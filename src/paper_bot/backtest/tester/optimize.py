@@ -9,6 +9,7 @@ import os
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
+from ...config import asset_profile
 from .run import normalize_config, run_tester
 
 MAX_COMBOS = 500
@@ -90,12 +91,17 @@ def heatmap(rows, grid, x, y, metric):
     return out
 
 
-def run_optimize(config: dict, grid: dict, criterion: str = "sharpe", is_period=IS_PERIOD,
-                 oos_period=OOS_PERIOD, n_jobs=None, progress=None, heatmap_params=None,
+def run_optimize(config: dict, grid: dict, criterion: str = "sharpe", is_period=None,
+                 oos_period=None, n_jobs=None, progress=None, heatmap_params=None,
                  bars=None, forecasts=None) -> dict:
-    """Chạy cả lưới. progress(done, total) gọi sau mỗi tổ hợp. Trả dict JSON được."""
+    """Chạy cả lưới. progress(done, total) gọi sau mỗi tổ hợp. Trả dict JSON được.
+    is/oos_period None -> theo asset: cổ phiếu IS 2019-2022 / OOS 2023-2024,
+    crypto IS 2022-2023 / OOS 2024 (prereg crypto)."""
     if criterion not in CRITERIA:
         raise ValueError(f"criterion phải thuộc {tuple(CRITERIA)}")
+    prof = asset_profile(config.get("asset", "stock"))
+    is_period = is_period or prof["is_period"] or IS_PERIOD
+    oos_period = oos_period or prof["oos_period"] or OOS_PERIOD
     combos = expand_grid(grid)
     for a, b in (is_period, oos_period):  # holdout / khoá lạ -> lỗi ngay, chưa chạy gì
         normalize_config({**apply_params(config, combos[0]), "from": a, "to": b})

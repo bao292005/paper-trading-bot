@@ -97,8 +97,9 @@ def streak_stats(pnls: List[float], sign: int) -> Dict[str, Optional[float]]:
             "avg_count": float(sum(len(x) for x in s) / len(s))}
 
 
-def mt5_report(result, initial_cash: float) -> dict:
-    """Báo cáo kiểu MT5. `result`: BacktestResult hoặc WalkForwardResult (lấy .result)."""
+def mt5_report(result, initial_cash: float, periods_per_year: int = 252) -> dict:
+    """Báo cáo kiểu MT5. `result`: BacktestResult hoặc WalkForwardResult (lấy .result).
+    periods_per_year: 252 cổ phiếu, 365 crypto (chỉ ảnh hưởng Sharpe)."""
     res = getattr(result, "result", result)
     trades = _sorted_trades(res.trades)
     pnls = [float(t.pnl) for t in trades]
@@ -127,7 +128,7 @@ def mt5_report(result, initial_cash: float) -> dict:
         "profit_factor": _ratio(gross_profit, -gross_loss),
         "expected_payoff": _ratio(net, n),
         "recovery_factor": _ratio(net, eq_dd["maximal"]),
-        "sharpe_ratio": sharpe(daily_returns(eq)) if len(eq) > 1 else 0.0,
+        "sharpe_ratio": sharpe(daily_returns(eq), periods_per_year) if len(eq) > 1 else 0.0,
         "balance_drawdown_absolute": bal_dd["absolute"],
         "balance_drawdown_maximal": bal_dd["maximal"],
         "balance_drawdown_maximal_pct": bal_dd["maximal_pct"],

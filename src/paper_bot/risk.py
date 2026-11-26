@@ -29,6 +29,25 @@ class RiskConfig:
     max_drawdown_pct: float = 0.15  # kill switch: sụt từ đỉnh > 15%
     atr_period: int = 14
     min_scale: float = 0.25  # hệ số nhỏ nhất của uncertainty_scale
+    qty_decimals: Optional[int] = None  # None = số nguyên (cổ phiếu); 6 = crypto mua lẻ
+
+    @classmethod
+    def for_asset(cls, asset: str = "stock") -> "RiskConfig":
+        """RiskConfig theo prereg của asset. "stock" = giống hệt RiskConfig() mặc định."""
+        from .config import asset_profile
+        p = asset_profile(asset)
+        return cls(max_pair_corr=p["max_pair_corr"], max_positions=p["max_positions"],
+                   max_position_pct=p["max_position_pct"], risk_per_trade=p["risk_per_trade"],
+                   atr_stop_mult=p["atr_stop_mult"], take_profit_mult=p["take_profit_mult"],
+                   qty_decimals=p["qty_decimals"] if p["fractional"] else None)
+
+
+def floor_qty(x: float, decimals: Optional[int] = None):
+    """Làm tròn XUỐNG số lượng: decimals=None -> số nguyên (cổ phiếu), 6 -> bội của 0.000001 (crypto)."""
+    if decimals is None:
+        return int(x)
+    step = 10 ** decimals
+    return math.floor(round(x * step, 4)) / step  # round(…, 4) chống sai số kiểu 0.29999999
 
 
 def atr(bars: pd.DataFrame, n: int = 14) -> float:
@@ -46,9 +65,13 @@ def atr(bars: pd.DataFrame, n: int = 14) -> float:
 
 
 def legacy_position_size(buying_power: float, price: float,
-                         risk_per_trade: float = 0.02, max_position_size: float = 1000.0) -> int:
-    """Công thức bài gốc (baseline B2): min(sức mua * 2%, 1000$) / giá, tối thiểu 1 cổ."""
+                         risk_per_trade: float = 0.02, max_position_size: float = 1000.0,
+                         qty_decimals: Optional[int] = None):
+    """Công thức bài gốc (baseline B2): min(sức mua * 2%, 1000$) / giá, tối thiểu 1 cổ.
+    qty_decimals (crypto): ra số lẻ làm tròn xuống, không ép tối thiểu 1 coin."""
     risk_amount = min(buying_power * risk_per_trade, max_position_size)
+    if qty_decimals is not None:
+        return floor_qty(risk_amount / price, qty_decimals)
     return max(1, int(risk_amount / price))
 
 
@@ -60,7 +83,7 @@ def atr_position_size(equity: float, price: float, atr: float, cfg: RiskConfig, 
     by_risk = equity * cfg.risk_per_trade / (cfg.atr_stop_mult * atr)
     by_cap = cfg.max_position_pct * equity / price
     by_cash = cash / price
-    return max(0, int(min(by_risk, by_cap, by_cash)))
+    return max(0, floor_qty(min(by_risk, by_cap, by_cash), cfg.qty_decimals))
 
 
 def uncertainty_scale(forecast: Optional[Forecast], ref_width: Optional[float],
@@ -127,7 +150,8 @@ def make_order_intent(signal: Signal, state: MarketState, equity: float, cash: f
     if signal.action == "SELL":
         if held_qty <= 0:
             return _skip(symbol, "SELL nhưng chưa có vị thế (không bán khống)")
-        return OrderIntent(symbol, "sell", int(held_qty), reason=signal.reason, asof=state.asof)
+        qty = int(held_qty) if cfg.qty_decimals is None else held_qty  # crypto: bán hết phần lẻ
+        return OrderIntent(symbol, "sell", qty, reason=signal.reason, asof=state.asof)
 
     if signal.action != "BUY":
         return _skip(symbol, f"action lạ: {signal.action}")
@@ -145,7 +169,7 @@ def make_order_intent(signal: Signal, state: MarketState, equity: float, cash: f
     atr_value = atr(state.bars, cfg.atr_period)
     base_qty = atr_position_size(equity, price, atr_value, cfg, cash)
     scale = uncertainty_scale(state.forecast, ref_width, cfg.min_scale)
-    qty = int(base_qty * scale)
+    qty = floor_qty(base_qty * scale, cfg.qty_decimals)
     if qty <= 0:
         return _skip(symbol, f"cỡ lệnh = 0 (ATR={atr_value:.3g}, cash={cash:.0f}, scale={scale:.2f})")
 

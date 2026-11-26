@@ -11,14 +11,14 @@ def daily_returns(equity: pd.Series) -> pd.Series:
     return equity.pct_change().dropna()
 
 
-def sharpe(returns: pd.Series) -> float:
-    """Sharpe năm hoá từ lợi suất ngày, rf = 0."""
+def sharpe(returns: pd.Series, periods_per_year: int = TRADING_DAYS) -> float:
+    """Sharpe năm hoá từ lợi suất ngày, rf = 0. Cổ phiếu 252 ngày/năm, crypto 365."""
     if len(returns) < 2:
         return 0.0
     std = returns.std(ddof=1)
     if std == 0 or math.isnan(std):
         return 0.0
-    return float(returns.mean() / std * math.sqrt(TRADING_DAYS))
+    return float(returns.mean() / std * math.sqrt(periods_per_year))
 
 
 def years_between(equity: pd.Series) -> float:
@@ -55,11 +55,12 @@ def turnover(fills, equity: pd.Series) -> float:
     return float(traded / equity.mean() / years)
 
 
-def compute_metrics(result) -> dict:
-    """Gom mọi thước đo từ một BacktestResult."""
+def compute_metrics(result, periods_per_year: int = TRADING_DAYS) -> dict:
+    """Gom mọi thước đo từ một BacktestResult. CAGR/turnover dùng số năm lịch nên không phụ thuộc
+    periods_per_year; chỉ Sharpe cần (252 cổ phiếu, 365 crypto)."""
     eq = result.equity["equity"]
     return {
-        "sharpe": sharpe(daily_returns(eq)),
+        "sharpe": sharpe(daily_returns(eq), periods_per_year),
         "cagr": cagr(eq),
         "max_drawdown": max_drawdown(eq),
         "n_trades": len(result.trades),

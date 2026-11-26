@@ -1,16 +1,16 @@
 # Baseline trên giai đoạn phát triển (2019-01 → 2024-12)
 
-Sinh bởi `scripts/run_backtest.py` ngày 2026-11-24. Walk-forward 12 cửa sổ (train 3 năm / test 6 tháng), vốn 100,000$, khớp ở open phiên sau, phí mỗi chiều 10 bps (trừ khi ghi khác). **Không dùng dữ liệu holdout (>= 2025-01-01).**
+Sinh bởi `scripts/run_backtest.py` ngày 2026-11-26. Walk-forward 12 cửa sổ (train 3 năm / test 6 tháng), vốn 100,000$, khớp ở open phiên sau, phí mỗi chiều 10 bps (trừ khi ghi khác). **Không dùng dữ liệu holdout (>= 2025-01-01).**
 
 ## Tổng hợp (sau phí)
 
 | cấu hình | sharpe | cagr | max_drawdown | n_trades | win_rate | turnover | exposure | final_equity | time_s |
 |---|---|---|---|---|---|---|---|---|---|
 | B0 (SPY) | 0.92 | 17.1% | -33.6% | 1 | 100.0% | 0.05 | 99.4% | 257,808$ | 0.1 |
-| B1 (chia đều 50 mã) | 0.99 | 18.0% | -30.1% | 1285 | 92.5% | 0.34 | 97.2% | 270,086$ | 3.6 |
-| B2 (bot gốc) | 0.65 | 3.3% | -10.3% | 1610 | 63.9% | 2.21 | 15.9% | 121,586$ | 10.4 |
-| B2 @5bps | 0.69 | 3.5% | -10.3% | 1610 | 65.1% | 2.19 | 15.8% | 123,071$ | 7.7 |
-| B2 @20bps | 0.56 | 2.9% | -10.4% | 1610 | 61.1% | 2.24 | 16.1% | 118,618$ | 8.1 |
+| B1 (chia đều 50 mã) | 0.99 | 18.0% | -30.1% | 1285 | 92.5% | 0.34 | 97.2% | 270,086$ | 4.0 |
+| B2 (bot gốc) | 0.65 | 3.3% | -10.3% | 1610 | 63.9% | 2.21 | 15.9% | 121,586$ | 10.0 |
+| B2 @5bps | 0.69 | 3.5% | -10.3% | 1610 | 65.1% | 2.19 | 15.8% | 123,071$ | 9.8 |
+| B2 @20bps | 0.56 | 2.9% | -10.4% | 1610 | 61.1% | 2.24 | 16.1% | 118,618$ | 8.8 |
 
 Cột: sharpe năm hoá (rf=0); cagr; max_drawdown; n_trades = số lần đóng (gồm vị thế còn mở cuối kỳ); win_rate sau phí; turnover năm hoá; exposure = tỷ trọng cổ phiếu TB; time_s = thời gian chạy.
 
@@ -54,4 +54,4 @@ Cột: sharpe năm hoá (rf=0); cagr; max_drawdown; n_trades = số lần đóng
 - "Sức mua" của B2 = tiền mặt (không có đòn bẩy 2x như tài khoản Alpaca).
 - Baseline không học gì từ dữ liệu train; walk-forward ở đây chỉ để cùng khung với FULL. Danh mục được giữ liên tục qua các cửa sổ.
 - Chỉ có lệnh market; SL/TP (không dùng ở baseline) kiểm tra theo nến ngày, SL trước nếu cả hai cùng chạm.
-- Tổng thời gian chạy (gồm đọc dữ liệu): 30.3s.
+- Tổng thời gian chạy (gồm đọc dữ liệu): 33.2s.

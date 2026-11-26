@@ -1,7 +1,8 @@
 """Chạy baseline B0/B1/B2 bằng walk-forward trên giai đoạn PHÁT TRIỂN (2019-01 → 2024-12).
 
-Cách chạy:  uv run python scripts/run_backtest.py
+Cách chạy:  uv run python scripts/run_backtest.py [--asset crypto]
 Kết quả:    docs/ket-qua/baseline-dev.md + data/trading.db (run_id bt-B0, bt-B1, bt-B2, ...)
+            crypto: docs/ket-qua/crypto-baseline-dev.md (C0/C1/C2, dev 2022-01 → 2024-12, run_id bt-C*)
 
 KHÔNG chạy holdout: chỉ đọc dữ liệu tới 2024-12-31, và run_walkforward cũng tự chặn.
 """
@@ -41,18 +42,93 @@ def load_all():
     return bars
 
 
-def yearly(equity: pd.Series) -> pd.DataFrame:
+def yearly(equity: pd.Series, periods_per_year: int = 252) -> pd.DataFrame:
     """Lợi suất, Sharpe và max drawdown từng năm (từ lợi suất ngày)."""
     r = daily_returns(equity)
     rows = {}
     for year, ry in r.groupby(r.index.year):
         curve = (1 + ry).cumprod()
-        rows[year] = {"return": curve.iloc[-1] - 1, "sharpe": sharpe(ry),
+        rows[year] = {"return": curve.iloc[-1] - 1, "sharpe": sharpe(ry, periods_per_year),
                       "max_drawdown": max_drawdown(pd.concat([pd.Series([1.0]), curve]))}
     return pd.DataFrame.from_dict(rows, orient="index")
 
 
+CRYPTO_OUT = OUT.parent / "crypto-baseline-dev.md"
+
+
+def run_crypto():
+    """C0/C1/C2 trên dev crypto 2022-01 → 2024-12 (walk-forward 6 cửa sổ), phí 25 bps + C2 @15/40."""
+    from paper_bot.config import CRYPTO_BENCHMARK, CRYPTO_UNIVERSE, asset_profile
+    p = asset_profile("crypto")
+    t0 = time.time()
+    bars = {s: load_bars(s, end=p["dev_end"], asset="crypto") for s in CRYPTO_UNIVERSE}
+    d = p["qty_decimals"]
+    c2 = lambda tb: make_b2(CRYPTO_UNIVERSE, qty_decimals=d)  # noqa: E731
+    configs = [
+        ("C0 (BTC buy&hold)", "bt-C0", lambda tb: make_b0(CRYPTO_BENCHMARK, qty_decimals=d),
+         {CRYPTO_BENCHMARK: bars[CRYPTO_BENCHMARK]}, 25),
+        ("C1 (chia đều 5 mã)", "bt-C1", lambda tb: make_b1(CRYPTO_UNIVERSE, qty_decimals=d), bars, 25),
+        ("C2 (bot gốc)", "bt-C2", c2, bars, 25),
+        ("C2 @15bps", "bt-C2-15bps", c2, bars, 15),
+        ("C2 @40bps", "bt-C2-40bps", c2, bars, 40),
+    ]
+    totals, years, timing = {}, {}, {}
+    for name, run_id, factory, data, bps in configs:
+        t = time.time()
+        wf = run_walkforward(factory, data, asset="crypto", initial_cash=CASH, cost_bps=bps)
+        timing[name] = time.time() - t
+        metrics = compute_metrics(wf.result, p["periods_per_year"])
+        save_result(wf.result, Store(DEFAULT_DB, run_id=run_id), {**metrics, "cost_bps": bps})
+        totals[name] = {**metrics, "final_equity": wf.result.equity["equity"].iloc[-1]}
+        years[name] = yearly(wf.result.equity["equity"], p["periods_per_year"])
+        m = totals[name]
+        print(f"{name:22s} sharpe={m['sharpe']:.2f} cagr={m['cagr']:.1%} "
+              f"maxDD={m['max_drawdown']:.1%} trades={m['n_trades']} ({timing[name]:.1f}s)")
+    write_crypto_report(totals, years, time.time() - t0)
+    print(f"Đã ghi {CRYPTO_OUT}")
+
+
+def write_crypto_report(totals, years, total_time):
+    table = pd.DataFrame.from_dict(totals, orient="index")
+    table["final_equity"] = table["final_equity"].map(lambda v: f"{v:,.0f}$")
+    table.index.name = "cấu hình"
+
+    def by_year(col, fmt):
+        df = pd.DataFrame({n: y[col] for n, y in years.items()})
+        df.index.name = "năm"
+        return to_markdown(df.apply(lambda c: c.map(fmt)))
+
+    pct = "{:.1%}".format
+    c2 = totals["C2 (bot gốc)"]
+    lines = [
+        "# Baseline CRYPTO trên giai đoạn phát triển (2022-01 → 2024-12)", "",
+        f"Sinh bởi `scripts/run_backtest.py --asset crypto` ngày {pd.Timestamp.now():%Y-%m-%d}. "
+        "Theo [prereg-crypto.md](../prereg-crypto.md): 5 mã BTC/ETH/SOL/AVAX/LINK (USD), walk-forward "
+        "6 cửa sổ test 6 tháng (train mở rộng từ 2021-01), vốn 100,000$, khớp open nến ngày sau (UTC), "
+        "phí taker 25 bps mỗi chiều (mua: trừ vào coin nhận; bán: trừ vào USD), mua lẻ 6 chữ số, "
+        "Sharpe năm hoá 365 ngày. **Không dùng dữ liệu holdout (>= 2025-01-01).**", "",
+        "## Tổng hợp (sau phí)", "", to_markdown(table), "",
+        "## Lợi suất từng năm", "", by_year("return", pct), "",
+        "## Sharpe từng năm", "", by_year("sharpe", "{:.2f}".format), "",
+        "## Max drawdown từng năm", "", by_year("max_drawdown", pct), "",
+        "## Ghi chú và hạn chế",
+        "- **Chỉ 5 mã, tương quan cao** (đều theo BTC): đa dạng hoá gần như không có; kết quả phụ thuộc "
+        "mạnh vào chu kỳ 2022 (sập) → 2023-2024 (hồi).",
+        "- **Survivorship bias:** 5 mã chọn theo hiện tại (năm 2026), các mã đã chết (LUNA, FTT...) không có mặt.",
+        "- **Thiếu dữ liệu:** SOL/USD thiếu ~418 ngày, AVAX/USD chỉ có từ 2021-11-18; ngày thiếu không nội suy, "
+        "mã không có nến thì không quyết định/không khớp. C1 chia equity/5 cố định: phần của mã thiếu nến ở "
+        "ngày cân bằng giữ nguyên (tiền mặt hoặc vị thế cũ).",
+        f"- **C2 dùng ít vốn:** mỗi lệnh tối đa 1000$ / 100k, exposure TB ~{c2['exposure']:.0%}; Sharpe "
+        "(rf=0) không đổi theo quy mô nhưng CAGR/MaxDD của C2 không so trực tiếp với C0/C1.",
+        "- Nến ngày Alpaca crypto (chốt 00:00 UTC), giá tổng hợp sàn của Alpaca, không mô phỏng spread/trượt giá riêng.",
+        f"- Tổng thời gian chạy: {total_time:.1f}s.", "",
+    ]
+    CRYPTO_OUT.write_text("\n".join(lines), encoding="utf-8")
+
+
 def main():
+    if "--asset" in sys.argv and sys.argv[sys.argv.index("--asset") + 1] == "crypto":
+        return run_crypto()
     t0 = time.time()
     bars = load_all()
     stocks = {s: bars[s] for s in UNIVERSE_50}

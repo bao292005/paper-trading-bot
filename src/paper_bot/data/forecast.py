@@ -159,6 +159,7 @@ class KronosForecaster(Forecaster):
 
 FORECAST_DIR = PROJECT_ROOT / "data" / "forecasts"
 CHRONOS_H5_PATH = FORECAST_DIR / "chronos_h5.parquet"  # cột: date, symbol, q10, q50, q90
+CRYPTO_FORECAST_PATH = FORECAST_DIR / "chronos_h5_crypto.parquet"  # crypto, 2021-07 -> 2024-12-31
 
 
 def load_forecasts(path: Optional[Path] = None) -> pd.DataFrame:
