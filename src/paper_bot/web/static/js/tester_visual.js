@@ -41,7 +41,8 @@ async function loadVisualSymbol(symbol) {
   initVisual();
   $("v-info").textContent = "Đang tải nến " + symbol + "…";
   try {
-    const r = await getJSON("/api/bars", { symbol, tf: "1D", start: res.config.from, end: res.config.to });
+    const r = await getJSON("/api/bars", { symbol, tf: "1D", start: res.config.from, end: res.config.to,
+                                           asset: res.config.asset || "stock" });
     if (seq !== VC.loadSeq) return;  // người dùng đã đổi mã trong lúc chờ
     setupReplay(res, symbol, r.bars);
   } catch (e) {

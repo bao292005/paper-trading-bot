@@ -22,7 +22,7 @@ async function refreshPositions() {
     PANEL.positions = (await getJSON("/api/positions")).positions;
     const rows = PANEL.positions.map((p) =>
       `<tr class="clickable" data-symbol="${esc(p.symbol)}"><td><b>${esc(p.symbol)}</b></td>` +
-      `<td class="num">${fmt.num(p.qty, 0)}</td><td class="num">${fmt.num(p.avg_entry_price)}</td>` +
+      `<td class="num">${fmt.qty(p.qty)}</td><td class="num">${fmt.num(p.avg_entry_price)}</td>` +
       `<td class="num ${fmt.cls(p.unrealized_pl)}">${fmt.num(p.unrealized_pl)}</td></tr>`).join("");
     document.getElementById("positions").innerHTML = rows
       ? `<table><tr><th>Mã</th><th class="num">Qty</th><th class="num">Giá vào</th><th class="num">P/L</th></tr>${rows}</table>`
@@ -38,7 +38,7 @@ async function refreshOrders() {
     const rows = PANEL.orders.map((o) =>
       `<tr class="clickable" data-symbol="${esc(o.symbol)}"><td><b>${esc(o.symbol)}</b></td>` +
       `<td class="${o.side === "buy" ? "up" : "down"}">${esc(o.side)}</td>` +
-      `<td>${esc(o.type)}</td><td class="num">${fmt.num(o.qty, 0)}</td>` +
+      `<td>${esc(o.type)}</td><td class="num">${fmt.qty(o.qty)}</td>` +
       `<td class="num">${fmt.num(orderPrice(o))}</td>` +
       `<td><button class="mini" data-cancel="${esc(o.id)}" title="Huỷ lệnh này">Huỷ</button></td></tr>`).join("");
     document.getElementById("orders").innerHTML = rows
@@ -51,7 +51,7 @@ async function refreshOrders() {
 function updatePriceLines() {
   const items = [];
   const pos = PANEL.positions.find((p) => p.symbol === CH.symbol);
-  if (pos) items.push({ price: pos.avg_entry_price, color: "#2196f3", title: `Vào ${fmt.num(pos.qty, 0)}` });
+  if (pos) items.push({ price: pos.avg_entry_price, color: "#2196f3", title: `Vào ${fmt.qty(pos.qty)}` });
   for (const o of PANEL.orders.filter((x) => x.symbol === CH.symbol)) {
     const price = orderPrice(o);
     if (price === null || price === undefined) continue;
@@ -74,7 +74,7 @@ function initPanel() {
       const btn = ev.target.closest("button[data-cancel]");
       if (btn) { cancelOrder(btn.dataset.cancel); return; }
       const tr = ev.target.closest("tr[data-symbol]");
-      if (tr) selectSymbol(tr.dataset.symbol);
+      if (tr) selectSymbol(tr.dataset.symbol, CRYPTO_SYMBOLS.includes(tr.dataset.symbol) ? "crypto" : "stock");
     });
   }
   refreshPanel();

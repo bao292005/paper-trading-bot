@@ -9,7 +9,7 @@ from typing import Any, Dict
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
 
 from ...ui.core import build_once_command, run_command
-from .order_rules import guard, require_confirm, validate_order, validate_order_id
+from .order_rules import guard, require_confirm, validate_crypto_web_order, validate_order, validate_order_id
 from .trading import call_alpaca, enum_text, get_client
 
 router = APIRouter()
@@ -25,6 +25,27 @@ def log_event(request: Request, kind: str, message: str, data: dict) -> None:
         Store(path=request.app.state.db_path, run_id=MANUAL_RUN_ID).log_event(kind, message, level="WARNING", data=data)
     except Exception as e:
         raise HTTPException(500, f"không ghi được event vào DB, lệnh KHÔNG được gửi: {e}") from None
+
+
+def build_crypto_request(o: Dict[str, Any]):
+    """Lệnh crypto đã kiểm tra -> request alpaca-py: GTC, qty lẻ, KHÔNG bracket (SL/TP do bot tự quản)."""
+    from alpaca.trading.enums import OrderSide, TimeInForce
+    from alpaca.trading.requests import LimitOrderRequest, MarketOrderRequest, StopLimitOrderRequest
+
+    common = dict(symbol=o["symbol"], qty=o["qty"], side=OrderSide(o["side"]), time_in_force=TimeInForce.GTC)
+    if o["type"] == "stop_limit":
+        return StopLimitOrderRequest(limit_price=o["limit_price"], stop_price=o["stop_price"], **common)
+    if o["type"] == "limit":
+        return LimitOrderRequest(limit_price=o["limit_price"], **common)
+    return MarketOrderRequest(**common)
+
+
+def _crypto_min_qty(client, symbol: str) -> float:
+    """Lượng tối thiểu của sàn (Assets API). Không hỏi được thì 0 (sàn sẽ tự từ chối nếu quá nhỏ)."""
+    try:
+        return float(getattr(client.get_asset(symbol), "min_order_size", 0) or 0)
+    except Exception:
+        return 0.0
 
 
 def build_request(o: Dict[str, Any]):
@@ -48,9 +69,16 @@ def build_request(o: Dict[str, Any]):
 @router.post("/api/orders", dependencies=[Depends(guard)])
 def place_order(request: Request, body: Dict[str, Any] = Body(...)):
     require_confirm(body)
-    order = validate_order(body)
-    client = get_client(request)  # thiếu key -> 503 (trước khi ghi event/gửi)
-    req = build_request(order)
+    if body.get("asset", "stock") == "crypto":
+        client = get_client(request)
+        order = validate_crypto_web_order(body, _crypto_min_qty(client, body.get("symbol", "")))
+        req = build_crypto_request(order)
+    elif body.get("asset", "stock") == "stock":
+        order = validate_order(body)
+        client = get_client(request)  # thiếu key -> 503 (trước khi ghi event/gửi)
+        req = build_request(order)
+    else:
+        raise HTTPException(422, "asset phải là stock hoặc crypto")
     log_event(request, "web_manual_order", f"{order['side']} {order['qty']} {order['symbol']} ({order['type']})", order)
     res = call_alpaca(client.submit_order, order_data=req)
     return {"ok": True, "id": str(getattr(res, "id", "")), "status": enum_text(getattr(res, "status", None)),
@@ -78,7 +106,8 @@ def run_bot_once(request: Request, body: Dict[str, Any] = Body(...)):
         require_confirm(body)
     try:
         cmd = build_once_command(body.get("symbols"), "full", dry_run=dry, ack=not dry,
-                                 confirm_text=body.get("confirm", "") if not dry else "")
+                                 confirm_text=body.get("confirm", "") if not dry else "",
+                                 asset=body.get("asset", "stock"))
     except PermissionError as e:
         raise HTTPException(403, str(e)) from None
     except ValueError as e:

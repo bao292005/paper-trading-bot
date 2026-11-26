@@ -18,6 +18,8 @@
     <aside id="t-left">
       <section class="card">
         <h3>Cài đặt</h3>
+        <label class="stacked">Loại tài sản
+          <select id="s-asset"><option value="stock" selected>Stock (cổ phiếu)</option><option value="crypto">Crypto (24/7, mua lẻ)</option></select></label>
         <div class="form-grid">
           <label>Chiến lược
             <select id="s-strategy"><option value="B2_goc">B2_goc (bot gốc)</option><option value="FULL">FULL</option></select></label>
@@ -92,7 +94,8 @@
       <div class="t-pane pad" id="pane-opt" hidden>
         <div class="warn-box"><b>Cảnh báo overfit:</b> <span id="o-note">Chọn tham số trên dữ liệu này rồi đánh giá lại trên cùng
           dữ liệu là overfit; kết quả chỉ có giá trị khi kiểm tra trên holdout một lần.</span>
-          IS = 2019-01-01..2022-12-31 (để chọn), OOS = 2023-01-01..2024-12-31 (để kiểm tra). Ngày trong panel Cài đặt không áp dụng cho tối ưu.</div>
+          <span id="o-periods">IS = 2019-01-01..2022-12-31 (để chọn), OOS = 2023-01-01..2024-12-31 (để kiểm tra).</span>
+          Ngày trong panel Cài đặt không áp dụng cho tối ưu.</div>
         <div class="small muted">Giá trị: danh sách <code>5,10,15</code> hoặc dãy <code>đầu:bước:cuối</code> (vd <code>5:5:25</code>). Tối đa 3 tham số, 500 tổ hợp.
           Mã, chiến lược, phí, deposit lấy từ panel Cài đặt.</div>
         <div class="opt-params">

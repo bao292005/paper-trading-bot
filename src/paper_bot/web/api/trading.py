@@ -4,6 +4,10 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request
 
+from ...config import CRYPTO_UNIVERSE
+from ...execution import normalize_crypto_symbol
+from .timeutil import check_asset
+
 router = APIRouter()
 
 
@@ -59,26 +63,48 @@ def account(request: Request):
             "status": enum_text(getattr(acc, "status", None))}
 
 
+def _sym_asset(symbol: str):
+    """Mã của Alpaca ("BTCUSD" hoặc "BTC/USD") -> (mã chuẩn, "crypto"/"stock")."""
+    s = normalize_crypto_symbol(symbol)
+    return s, ("crypto" if s in CRYPTO_UNIVERSE else "stock")
+
+
+def _keep(asset: Optional[str], row_asset: str) -> bool:
+    return asset is None or asset == row_asset  # không truyền asset = trả tất cả (như trước)
+
+
 @router.get("/api/positions")
-def positions(request: Request):
+def positions(request: Request, asset: Optional[str] = None):
+    """Vị thế (qty lẻ với crypto). ?asset=stock|crypto để lọc; mã crypto luôn chuẩn hoá về "BTC/USD"."""
+    if asset is not None:
+        check_asset(asset)
     rows = call_alpaca(get_client(request).get_all_positions)
-    return {"positions": [{
-        "symbol": p.symbol, "qty": float(p.qty), "side": enum_text(getattr(p, "side", None)),
-        "avg_entry_price": float(p.avg_entry_price), "current_price": num(getattr(p, "current_price", None)),
-        "market_value": num(p.market_value), "unrealized_pl": num(p.unrealized_pl),
-        "unrealized_plpc": num(getattr(p, "unrealized_plpc", None))} for p in rows]}
+    out = []
+    for p in rows:
+        sym, kind = _sym_asset(p.symbol)
+        if _keep(asset, kind):
+            row = {
+                "symbol": sym, "qty": float(p.qty), "side": enum_text(getattr(p, "side", None)),
+                "avg_entry_price": float(p.avg_entry_price), "current_price": num(getattr(p, "current_price", None)),
+                "market_value": num(p.market_value), "unrealized_pl": num(p.unrealized_pl),
+                "unrealized_plpc": num(getattr(p, "unrealized_plpc", None))}
+            out.append({**row, "asset": "crypto"} if kind == "crypto" else row)  # dòng cổ phiếu giữ nguyên như cũ
+    return {"positions": out}
 
 
 @router.get("/api/orders")
-def orders(request: Request):
-    """Lệnh đang mở (kể cả chân SL/TP của bracket, trả phẳng không lồng)."""
+def orders(request: Request, asset: Optional[str] = None):
+    """Lệnh đang mở (kể cả chân SL/TP của bracket, trả phẳng không lồng). ?asset= để lọc."""
     from alpaca.trading.enums import QueryOrderStatus
     from alpaca.trading.requests import GetOrdersRequest
 
+    if asset is not None:
+        check_asset(asset)
     req = GetOrdersRequest(status=QueryOrderStatus.OPEN, nested=False, limit=100)
-    rows = call_alpaca(get_client(request).get_orders, filter=req)
+    rows = [o for o in call_alpaca(get_client(request).get_orders, filter=req)
+            if _keep(asset, _sym_asset(o.symbol)[1])]
     return {"orders": [{
-        "id": str(o.id), "symbol": o.symbol, "side": enum_text(o.side), "qty": num(o.qty),
+        "id": str(o.id), "symbol": _sym_asset(o.symbol)[0], "side": enum_text(o.side), "qty": num(o.qty),
         "type": enum_text(o.order_type), "status": enum_text(o.status),
         "limit_price": num(getattr(o, "limit_price", None)), "stop_price": num(getattr(o, "stop_price", None)),
         "order_class": enum_text(getattr(o, "order_class", None)),

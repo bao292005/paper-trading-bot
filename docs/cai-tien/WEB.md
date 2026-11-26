@@ -1,5 +1,16 @@
 # Nhật ký web app (agent j-web)
 
+## Chế độ crypto cho web + /tester (agent j-cx-live, 2026-11-26)
+Chi tiết từng bước: [CRYPTO-LIVE.md](CRYPTO-LIVE.md). Cổ phiếu giữ nguyên hành vi (tin/phản hồi cổ phiếu không thêm khoá `asset`).
+- Trang `/`: ô chọn Stock/Crypto; `/api/symbols|bars|indicators|markers|positions|orders` nhận `asset`; crypto 24/7, giờ UTC;
+  `/ws/live?asset=crypto` dùng `CryptoDataStream` (tối đa 1 stream cổ phiếu + 1 stream crypto); form lệnh crypto: qty lẻ, market/limit/stop-limit,
+  không SL/TP, GTC, vẫn cần `XAC NHAN` + Origin/header.
+- Trang `/tester`: ô `s-asset`; `GET /api/tester/options?asset=` trả mã, `min_date`, mặc định ngày/phí, IS/OOS theo asset;
+  body `asset` ("stock" mặc định | "crypto"). Crypto: mã chỉ trong 5 mã whitelist, từ 2021-01-01 (mặc định 2022-01-01), tới 2024-12-31 (holdout vẫn chặn),
+  phí mặc định 25 bps, tối ưu IS 2022–2023 / OOS 2024 (server lấy từ profile, không nhận ngày). Config gửi `run_tester` chỉ có khoá `asset`
+  khi là crypto. Visual/nến phút lấy `/api/bars?asset=`, nến phút crypto hiện giờ UTC. Lưu DB nhận qty lẻ.
+- Test: `tests/test_web_crypto.py`, `tests/test_web_tester_crypto.py`, `tests/test_ui_crypto.py`.
+
 ## Trang /tester kiểu MT5 Strategy Tester (agent j-webt, 2026-11-26)
 
 ### Bước 1 – API + job runner

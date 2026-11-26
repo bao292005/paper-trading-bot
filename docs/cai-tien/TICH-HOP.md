@@ -55,3 +55,13 @@
 - README: cách chạy mới + cảnh báo (ablation dev: bỏ bracket/regime/forecast làm Sharpe tăng; cấu hình chính thức chờ holdout; calib_end; nến đã đóng; kill switch).
   quy-trinh.md: thêm Phần A (luồng full), phần cũ thành Phần B (legacy).
 - Test: thêm 3 test (calib_end đổi → fit lại; reset kill switch theo run_id + event; cờ CLI). `pytest -q` cuối: 219 passed.
+
+## 2026-11-26 — Crypto: `--asset crypto` và đánh đổi `--exchange-stop` (agent j-cx-live)
+Chi tiết kỹ thuật: [CRYPTO-LIVE.md](CRYPTO-LIVE.md). Cổ phiếu giữ nguyên bracket SL/TP của Alpaca.
+- Alpaca crypto không có bracket/OCO → bot **tự quản SL/TP**: kiểm giá mỗi vòng (trước khi tải nến) rồi bán market toàn bộ qty thực.
+- `--exchange-stop` (mặc định **TẮT**) đặt thêm stop_limit bán trên sàn (limit thấp hơn stop 0.5%). Đánh đổi:
+  - Được: có bảo vệ giữa hai vòng khi bot không chạy / mất mạng.
+  - Mất: stop_limit có thể KHÔNG khớp khi giá gap qua limit (vẫn giữ vị thế, tệ hơn market); khoá một phần coin nên bot bán SL/TP
+    tự quản có thể bị sàn từ chối vì thiếu số dư khả dụng; phải huỷ stop khi bot tự bán/chốt lời; thêm lệnh chờ cần theo dõi.
+  - Vì vậy mặc định tắt; chỉ bật khi chấp nhận rủi ro trên, và nên để `--interval` ngắn hơn thay vì dựa vào stop trên sàn.
+- Kill switch chặn mua, KHÔNG chặn bán SL/TP. Equity/cash lấy theo tài khoản chung (cả cổ phiếu đang giữ).

@@ -29,6 +29,9 @@ const fmt = {
   num: (v, d = 2) => (v === null || v === undefined || isNaN(v)) ? "-" :
     Number(v).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d }),
   usd: (v) => (v === null || v === undefined || isNaN(v)) ? "-" : "$" + fmt.num(v, 2),
+  // Số lượng: cổ phiếu là số nguyên, crypto là số lẻ (tối đa 6 chữ số thập phân, bỏ số 0 thừa)
+  qty: (v) => (v === null || v === undefined || isNaN(v)) ? "-" :
+    Number(v).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 6 }),
   cls: (v) => v > 0 ? "up" : v < 0 ? "down" : "",
 };
 

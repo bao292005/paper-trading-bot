@@ -11,7 +11,9 @@ MAIN_IDS = ["symbol-input", "tf-buttons", "chk-ma10", "chk-ma30", "chk-ma200", "
             "run-select", "live-status", "chart", "legend", "tooltip", "account", "positions", "orders",
             # bước 4: form lệnh, huỷ/modal xác nhận, nút chạy bot
             "order-form", "ord-symbol", "ord-side", "ord-type", "ord-qty", "ord-limit", "ord-sl", "ord-tp", "ord-msg",
-            "modal", "modal-input", "modal-ok", "modal-cancel", "bot-symbols", "bot-dry", "bot-real", "bot-output"]
+            "modal", "modal-input", "modal-ok", "modal-cancel", "bot-symbols", "bot-dry", "bot-real", "bot-output",
+            # crypto: chọn loại tài sản, giá stop, ghi chú SL/TP do bot tự quản
+            "asset-select", "ord-stop", "ord-note"]
 
 
 @pytest.fixture

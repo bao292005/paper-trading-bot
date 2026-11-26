@@ -19,7 +19,7 @@ from typing import Dict, Iterable, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
-from ..config import BENCHMARK, ENGINES, FEATURE_FLAGS, SHORT_FLAG_NAMES, UNIVERSE_50
+from ..config import BENCHMARK, CRYPTO_UNIVERSE, ENGINES, FEATURE_FLAGS, SHORT_FLAG_NAMES, UNIVERSE_50
 from ..contracts import Forecast, MarketState, NewsItem, OrderIntent, Signal
 from ..data.cache import load_bars
 from ..data.forecast import get_forecast
@@ -397,17 +397,38 @@ def confirmed(ack, text) -> bool:
     return ack is True and text == CONFIRM_WORD
 
 
+def validate_crypto_symbols(symbols) -> List[str]:
+    """Mã crypto phải nằm đúng trong whitelist (dạng "BTC/USD"), bỏ trùng. Sai -> ValueError."""
+    if isinstance(symbols, str) or not symbols:
+        raise ValueError("cần ít nhất 1 mã crypto (danh sách)")
+    out = []
+    for s in symbols:
+        if s not in CRYPTO_UNIVERSE:
+            raise ValueError(f"mã crypto không hợp lệ: {s!r} (chỉ {', '.join(CRYPTO_UNIVERSE)})")
+        if s not in out:
+            out.append(s)
+    return out
+
+
 def build_once_command(symbols, engine: str = "full", disable=(), llm: bool = False,
-                       dry_run: bool = True, ack=False, confirm_text: str = "") -> List[str]:
-    """Danh sách tham số (KHÔNG shell) cho `paper-bot once`. dry_run=False cần đủ 2 xác nhận."""
+                       dry_run: bool = True, ack=False, confirm_text: str = "", asset: str = "stock") -> List[str]:
+    """Danh sách tham số (KHÔNG shell) cho `paper-bot once`. dry_run=False cần đủ 2 xác nhận.
+    asset="crypto" thêm `--asset crypto`: chỉ nhận mã whitelist crypto và engine full."""
+    if asset not in ("stock", "crypto"):
+        raise ValueError(f"asset không hợp lệ: {asset!r}")
     if engine not in ENGINES:
         raise ValueError(f"engine không hợp lệ: {engine!r}")
-    syms, off = validate_symbols(symbols), validate_disable(disable)
+    if asset == "crypto" and engine != "full":
+        raise ValueError("crypto chỉ chạy với engine full")
+    syms = validate_crypto_symbols(symbols) if asset == "crypto" else validate_symbols(symbols)
+    off = validate_disable(disable)
     if engine == "legacy" and off:
         raise ValueError("engine legacy không hỗ trợ --disable")
     if not dry_run and not confirmed(ack, confirm_text):
         raise PermissionError(f"Chạy THẬT cần tick đồng ý và gõ đúng '{CONFIRM_WORD}'")
     cmd = BASE_CMD + ["once", "--symbols", *syms, "--engine", engine]
+    if asset == "crypto":
+        cmd += ["--asset", "crypto"]
     if off:
         cmd += ["--disable", *off]
     if llm:
@@ -430,9 +451,9 @@ def is_real_order_command(cmd: List[str]) -> bool:
 
 
 def loop_command_text(symbols, engine: str = "full", disable=(), llm: bool = False,
-                      dry_run: bool = True, interval: int = 30) -> str:
+                      dry_run: bool = True, interval: int = 30, asset: str = "stock") -> str:
     """Chỉ để HIỂN THỊ: câu lệnh loop người dùng tự chép chạy ở terminal (UI không chạy loop)."""
-    cmd = build_once_command(symbols, engine, disable, llm, dry_run=True)  # tái dùng kiểm tra
+    cmd = build_once_command(symbols, engine, disable, llm, dry_run=True, asset=asset)  # tái dùng kiểm tra
     cmd[cmd.index("once")] = "loop"
     cmd = [c for c in cmd if c != "--dry-run"]
     cmd += ["--interval", str(validate_interval(interval))] + (["--dry-run"] if dry_run else [])

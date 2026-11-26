@@ -26,10 +26,15 @@ class Client:
     ws: object  # có send_json()
     symbol: str
     tf: str
+    asset: str = "stock"  # "stock" | "crypto"
 
 
 def ny_now() -> pd.Timestamp:
     return pd.Timestamp.now(tz=NY).tz_localize(None)
+
+
+def utc_now() -> pd.Timestamp:
+    return pd.Timestamp.now(tz="UTC").tz_localize(None)
 
 
 def market_is_open(now: pd.Timestamp) -> bool:
@@ -38,19 +43,38 @@ def market_is_open(now: pd.Timestamp) -> bool:
 
 
 class LiveHub:
-    def __init__(self, adapter_factory, seed_fn=None, clock=ny_now, sleep=asyncio.sleep,
-                 heartbeat=30.0, backoff_start=1.0, backoff_max=60.0):
-        self.adapter_factory, self.seed_fn, self.clock, self.sleep = adapter_factory, seed_fn, clock, sleep
+    """Hub của MỘT loại tài sản. Hub stock giữ thêm `crypto_hub` (cùng lớp, asset="crypto") và chuyển client
+    crypto sang đó -> tối đa 1 stream cổ phiếu + 1 stream crypto."""
+
+    def __init__(self, adapter_factory, seed_fn=None, clock=None, sleep=asyncio.sleep,
+                 heartbeat=30.0, backoff_start=1.0, backoff_max=60.0, asset="stock",
+                 crypto_adapter_factory=None, crypto_seed_fn=None):
+        self.asset = asset
+        self.adapter_factory, self.seed_fn, self.sleep = adapter_factory, seed_fn, sleep
+        self.clock = clock or (utc_now if asset == "crypto" else ny_now)
         self.heartbeat, self.backoff_start, self.backoff_max = heartbeat, backoff_start, backoff_max
         self.clients = set()
         self.refs: Counter = Counter()  # mã -> số client đang xem
-        self.minutes: Dict[str, Dict[pd.Timestamp, dict]] = {}  # mã -> {phút NY: ohlcv}
+        self.minutes: Dict[str, Dict[pd.Timestamp, dict]] = {}  # mã -> {phút NY (crypto: UTC): ohlcv}
         self.adapter = None
         self.stream_state, self.last_error = "idle", ""
         self._tasks = []
+        self.crypto_hub = None
+        if asset == "stock" and crypto_adapter_factory is not None:
+            self.crypto_hub = LiveHub(crypto_adapter_factory, crypto_seed_fn, sleep=sleep, heartbeat=heartbeat,
+                                      backoff_start=backoff_start, backoff_max=backoff_max, asset="crypto")
+
+    def _hub_for(self, client: Client):
+        return self.crypto_hub if client.asset == "crypto" and self.crypto_hub is not None else self
 
     # ---------- client ----------
     async def add(self, client: Client) -> None:
+        hub = self._hub_for(client)
+        if hub is not self:
+            return await hub.add(client)
+        if client.asset == "crypto" and self.asset != "crypto":
+            return await self._send(client, {"type": "status", "market": "closed", "stream": "idle",
+                                             "message": "Chưa bật stream crypto"})
         first = self.refs[client.symbol] == 0
         self.refs[client.symbol] += 1
         self.clients.add(client)
@@ -64,6 +88,9 @@ class LiveHub:
             self._tasks = [asyncio.create_task(self._supervise()), asyncio.create_task(self._beat())]
 
     async def remove(self, client: Client) -> None:
+        hub = self._hub_for(client)
+        if hub is not self:
+            return await hub.remove(client)
         if client not in self.clients:
             return
         self.clients.discard(client)
@@ -77,10 +104,16 @@ class LiveHub:
                 except Exception as e:
                     logger.warning(f"unsubscribe {client.symbol} lỗi: {e}")
         if not self.clients:
-            await self.shutdown()
+            await self._shutdown_own()  # hết người xem: nhả kết nối (hub kia không bị ảnh hưởng)
 
     async def shutdown(self) -> None:
-        """Đóng kết nối Alpaca (nhả slot kết nối duy nhất) và dừng các task nền."""
+        """Đóng mọi kết nối Alpaca (stock + crypto) và dừng các task nền."""
+        if self.crypto_hub is not None:
+            await self.crypto_hub.shutdown()
+        await self._shutdown_own()
+
+    async def _shutdown_own(self) -> None:
+        """Đóng kết nối của riêng hub này (nhả slot kết nối duy nhất)."""
         tasks, self._tasks = self._tasks, []
         if self.adapter is not None:
             try:
@@ -109,8 +142,9 @@ class LiveHub:
     async def _on_bar(self, bar) -> None:
         """Callback của stream cho nến phút mới / nến phút được sửa (stream thắng dữ liệu seed)."""
         ts = pd.Timestamp(bar.timestamp)
-        ts = (ts.tz_localize("UTC") if ts.tzinfo is None else ts).tz_convert(NY).tz_localize(None)
-        if bar.symbol not in self.refs or not market_is_open(ts):
+        tz = "UTC" if self.asset == "crypto" else NY
+        ts = (ts.tz_localize("UTC") if ts.tzinfo is None else ts).tz_convert(tz).tz_localize(None)
+        if bar.symbol not in self.refs or not (self.asset == "crypto" or market_is_open(ts)):
             return
         store = self.minutes.setdefault(bar.symbol, {})
         store[ts] = {"open": float(bar.open), "high": float(bar.high), "low": float(bar.low),
@@ -125,8 +159,8 @@ class LiveHub:
         store = self.minutes.get(symbol)
         if not store:
             return None
-        key = snap_to_bar(max(store), tf)
-        mins = [store[t] for t in sorted(store) if snap_to_bar(t, tf) == key]
+        key = snap_to_bar(max(store), tf, self.asset)
+        mins = [store[t] for t in sorted(store) if snap_to_bar(t, tf, self.asset) == key]
         return {"time": key, "open": mins[0]["open"], "high": max(m["high"] for m in mins),
                 "low": min(m["low"] for m in mins), "close": mins[-1]["close"],
                 "volume": sum(m["volume"] for m in mins)}
@@ -134,7 +168,8 @@ class LiveHub:
     async def _push_candle(self, client: Client) -> None:
         c = self.candle(client.symbol, client.tf)
         if c:
-            await self._send(client, {"type": "bar", "symbol": client.symbol, "tf": client.tf, **c})
+            extra = {"asset": "crypto"} if self.asset == "crypto" else {}  # tin cổ phiếu giữ nguyên như cũ
+            await self._send(client, {"type": "bar", "symbol": client.symbol, "tf": client.tf, **extra, **c})
 
     async def _send(self, client: Client, msg: dict) -> None:
         try:
@@ -144,7 +179,7 @@ class LiveHub:
 
     # ---------- trạng thái ----------
     def status(self) -> dict:
-        market = "open" if market_is_open(self.clock()) else "closed"
+        market = "open" if self.asset == "crypto" or market_is_open(self.clock()) else "closed"  # crypto 24/7
         text = {"closed": "Thị trường đóng cửa (market closed)"}.get(market, "")
         if self.stream_state in ("reconnecting", "error"):
             text = f"Stream lỗi, đang nối lại: {self.last_error}"

@@ -22,12 +22,25 @@ function buildForm(opts) {
   $("f-flags").innerHTML = opts.flags.map((f) =>
     `<label class="flag-row"><input type="checkbox" id="f-${f}" checked> ${f.replace("use_", "")}</label>`).join("");
   $("date-note").textContent = "Tối đa " + opts.max_date + ": " + opts.holdout_note;
-  $("s-symbols").addEventListener("change", onSymbolChange);
-  $("s-strategy").addEventListener("change", applyStrategyUI);
+  applyAssetDefaults(opts);
+  $("s-symbols").onchange = onSymbolChange;  // gán (không addEventListener) vì buildForm chạy lại khi đổi asset
+  $("s-strategy").onchange = applyStrategyUI;
   $("sym-10").onclick = () => setSymbols(opts.universe.slice(0, 10));
   $("sym-clear").onclick = () => setSymbols([]);
   applyStrategyUI();
   updateSymCount();
+}
+
+// Ngày/phí mặc định + ghi chú IS/OOS theo loại tài sản (stock 2019.., crypto 2022..; phí 10 / 25 bps)
+function applyAssetDefaults(opts) {
+  for (const [id, v] of [["s-from", opts.default_from], ["s-to", opts.default_to]]) {
+    $(id).min = opts.min_date;
+    $(id).max = opts.max_date;
+    $(id).value = v;
+  }
+  $("s-cost").value = opts.default_cost_bps;
+  $("o-periods").textContent = "IS = " + opts.is_period.join("..") + " (để chọn), OOS = " + opts.oos_period.join("..") +
+    " (để kiểm tra).";
 }
 
 function $(id) { return document.getElementById(id); }
@@ -75,7 +88,7 @@ function readSettings() {
   if (to > o.max_date) throw new Error(o.holdout_note);
   if (from < o.min_date) throw new Error("Từ ngày phải >= " + o.min_date + ".");
   if (from >= to) throw new Error("Từ ngày phải trước Đến ngày.");
-  const body = { symbols, strategy: $("s-strategy").value, mode: $("s-mode").value, from, to,
+  const body = { asset: $("s-asset").value, symbols, strategy: $("s-strategy").value, mode: $("s-mode").value, from, to,
                  fill_model: $("s-fill").value, deposit: readNumber("s-deposit", "Deposit"),
                  cost_bps: readNumber("s-cost", "Phí"), strategy_params: {}, risk: {}, flags: {} };
   for (const section of ["strategy_params", "risk"]) {

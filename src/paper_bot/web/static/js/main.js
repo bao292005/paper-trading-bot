@@ -5,9 +5,24 @@ async function reload() {
   updatePriceLines();
 }
 
-function selectSymbol(raw) {
-  const sym = String(raw || "").trim().toUpperCase();
-  if (!/^[A-Z]{1,6}$/.test(sym) || sym === CH.symbol) {
+const CRYPTO_SYMBOLS = ["BTC/USD", "ETH/USD", "SOL/USD", "AVAX/USD", "LINK/USD"];  // whitelist, khớp server
+
+// Chuẩn hoá mã theo loại tài sản; mã không hợp lệ trả null. Crypto: "btc" -> "BTC/USD", chỉ nhận whitelist.
+function normalizeSymbol(raw, asset) {
+  let sym = String(raw || "").trim().toUpperCase();
+  if (asset === "crypto") {
+    if (/^[A-Z]{2,5}$/.test(sym)) sym += "/USD";
+    return CRYPTO_SYMBOLS.includes(sym) ? sym : null;
+  }
+  return /^[A-Z]{1,6}$/.test(sym) ? sym : null;
+}
+
+function selectSymbol(raw, asset) {
+  // Bấm vào vị thế/lệnh crypto từ panel: tự chuyển sang chế độ crypto
+  const kind = asset || (CRYPTO_SYMBOLS.includes(String(raw).toUpperCase()) ? "crypto" : CH.asset);
+  if (kind !== CH.asset) { changeAsset(kind, raw); return; }
+  const sym = normalizeSymbol(raw, CH.asset);
+  if (sym === null || sym === CH.symbol) {
     document.getElementById("symbol-input").value = CH.symbol;
     return;
   }
@@ -28,15 +43,31 @@ function selectTf(tf) {
 
 async function loadSymbols() {
   try {
-    const { symbols } = await getJSON("/api/symbols");
+    const { symbols } = await getJSON("/api/symbols", { asset: CH.asset });
     document.getElementById("symbols-list").innerHTML = symbols.map((s) => `<option value="${esc(s)}">`).join("");
   } catch (e) { /* gợi ý mã là phụ, bỏ qua lỗi */ }
+}
+
+// Đổi Stock <-> Crypto: mỗi loại có danh sách mã riêng, múi giờ hiển thị riêng, form lệnh/bot riêng
+function changeAsset(asset, wantedSymbol) {
+  CH.asset = asset;
+  document.getElementById("asset-select").value = asset;
+  setChartTz(asset);
+  const sym = normalizeSymbol(wantedSymbol, asset) || (asset === "crypto" ? CRYPTO_SYMBOLS[0] : "AAPL");
+  CH.symbol = sym;
+  document.getElementById("symbol-input").value = sym;
+  loadSymbols();
+  reload();
+  switchLive();
+  syncOrderAsset();
+  syncBotAsset();
 }
 
 function bindToolbar() {
   const input = document.getElementById("symbol-input");
   input.addEventListener("keydown", (ev) => { if (ev.key === "Enter") selectSymbol(input.value); });
   input.addEventListener("change", () => selectSymbol(input.value));
+  document.getElementById("asset-select").addEventListener("change", (ev) => changeAsset(ev.target.value));
   document.getElementById("tf-buttons").addEventListener("click", (ev) => {
     if (ev.target.dataset.tf) selectTf(ev.target.dataset.tf);
   });

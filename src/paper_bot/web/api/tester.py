@@ -19,7 +19,8 @@ from typing import Any, Dict
 import pandas as pd
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
 
-from ...config import BENCHMARK, FEATURE_FLAGS, UNIVERSE_50
+from ...config import (ASSET_CLASSES, BENCHMARK, CRYPTO_BENCHMARK, CRYPTO_UNIVERSE, FEATURE_FLAGS, UNIVERSE_50,
+                       asset_profile)
 from ..jobs import JobLimitError
 from .order_rules import guard
 
@@ -27,6 +28,7 @@ router = APIRouter()
 
 MAX_SYMBOLS, MAX_COMBOS, MAX_GRID_PARAMS = 20, 500, 3
 MIN_DATE, MAX_DATE = "2019-01-01", "2024-12-31"
+CRYPTO_MIN_DATE = "2021-01-01"  # nến crypto tải từ 2021-01-01 (warmup); dev mặc định từ 2022-01-01
 HOLDOUT_MSG = ("Từ 2025-01-01 là dữ liệu HOLDOUT, để dành kiểm tra một lần cuối khi đã khoá cấu hình; "
                "tester không cho dùng. Chọn 'Đến ngày' <= 2024-12-31.")
 NAME_RE = re.compile(r"[a-z0-9-]{1,40}")
@@ -67,8 +69,26 @@ def check_date(v, name: str) -> str:
     return v
 
 
-def check_symbols(v) -> list:
-    allowed = set(UNIVERSE_50) | {BENCHMARK}
+def check_asset(v) -> str:
+    if v not in ASSET_CLASSES:
+        bad(f"asset phải thuộc {list(ASSET_CLASSES)}")
+    return v
+
+
+def asset_limits(asset: str) -> dict:
+    """Giới hạn/mặc định form theo loại tài sản (cổ phiếu giữ nguyên như trước)."""
+    if asset == "crypto":
+        p = asset_profile("crypto")
+        return {"universe": list(CRYPTO_UNIVERSE), "benchmark": CRYPTO_BENCHMARK, "min_date": CRYPTO_MIN_DATE,
+                "default_from": p["dev_start"], "default_to": p["dev_end"], "cost_bps": p["cost_bps"],
+                "is_period": list(p["is_period"]), "oos_period": list(p["oos_period"])}
+    return {"universe": UNIVERSE_50, "benchmark": BENCHMARK, "min_date": MIN_DATE, "default_from": MIN_DATE,
+            "default_to": MAX_DATE, "cost_bps": 10.0, "is_period": ["2019-01-01", "2022-12-31"],
+            "oos_period": ["2023-01-01", "2024-12-31"]}
+
+
+def check_symbols(v, asset: str = "stock") -> list:
+    allowed = set(UNIVERSE_50) | {BENCHMARK} if asset == "stock" else set(CRYPTO_UNIVERSE) | {CRYPTO_BENCHMARK}
     if not isinstance(v, list) or not v or not all(isinstance(s, str) for s in v):
         bad("symbols phải là danh sách mã (1..20 mã)")
     out = list(dict.fromkeys(v))
@@ -92,14 +112,18 @@ def build_config(body: Dict[str, Any], with_dates: bool = True) -> dict:
     strategy = body.get("strategy", "B2_goc")
     if strategy not in ("B2_goc", "FULL"):
         bad("strategy phải là B2_goc hoặc FULL")
-    cfg: Dict[str, Any] = {"symbols": check_symbols(body.get("symbols")), "strategy": strategy}
+    asset = check_asset(body.get("asset", "stock"))
+    lim = asset_limits(asset)
+    cfg: Dict[str, Any] = {"symbols": check_symbols(body.get("symbols"), asset), "strategy": strategy}
+    if asset == "crypto":
+        cfg["asset"] = "crypto"  # cổ phiếu KHÔNG thêm khoá này: config giữ y hệt trước
     if with_dates:
-        start = check_date(body.get("from", MIN_DATE), "Từ ngày")
+        start = check_date(body.get("from", lim["default_from"]), "Từ ngày")
         end = check_date(body.get("to", MAX_DATE), "Đến ngày")
         if end > MAX_DATE:
             bad(HOLDOUT_MSG)
-        if start < MIN_DATE:
-            bad(f"Từ ngày phải >= {MIN_DATE} (dữ liệu phát triển bắt đầu từ đó)")
+        if start < lim["min_date"]:
+            bad(f"Từ ngày phải >= {lim['min_date']} (dữ liệu phát triển bắt đầu từ đó)")
         if (pd.Timestamp(end) - pd.Timestamp(start)).days < 20:
             bad("khoảng thời gian phải dài ít nhất 20 ngày")
         cfg["from"], cfg["to"] = start, end
@@ -109,7 +133,7 @@ def build_config(body: Dict[str, Any], with_dates: bool = True) -> dict:
         bad("fill_model phải là daily_ohlc hoặc minute")
     cfg["mode"], cfg["fill_model"] = body.get("mode", "single"), body.get("fill_model", "daily_ohlc")
     cfg["deposit"] = num(body.get("deposit", 100000), "deposit", float, 1000, 10_000_000)
-    cfg["cost_bps"] = num(body.get("cost_bps", 10), "cost_bps", float, 0, 100)
+    cfg["cost_bps"] = num(body.get("cost_bps", lim["cost_bps"]), "cost_bps", float, 0, 100)
     cfg["strategy_params"], cfg["risk"], cfg["flags"] = {}, {}, {}
     for key, section in (("strategy_params", cfg["strategy_params"]), ("risk", cfg["risk"])):
         for name, v in check_section(body, key).items():
@@ -170,10 +194,13 @@ def start_job(request: Request, kind: str, work) -> dict:
 
 
 @router.get("/api/tester/options")
-def options():
-    return {"universe": UNIVERSE_50, "benchmark": BENCHMARK, "flags": list(FEATURE_FLAGS),
+def options(asset: str = "stock"):
+    lim = asset_limits(check_asset(asset))
+    return {"asset": asset, "universe": lim["universe"], "benchmark": lim["benchmark"], "flags": list(FEATURE_FLAGS),
             "criteria": list(CRITERIA), "max_symbols": MAX_SYMBOLS, "max_combos": MAX_COMBOS,
-            "min_date": MIN_DATE, "max_date": MAX_DATE, "holdout_note": HOLDOUT_MSG,
+            "min_date": lim["min_date"], "max_date": MAX_DATE, "holdout_note": HOLDOUT_MSG,
+            "default_from": lim["default_from"], "default_to": lim["default_to"], "default_cost_bps": lim["cost_bps"],
+            "is_period": lim["is_period"], "oos_period": lim["oos_period"],
             "params": {k: {"min": v[1], "max": v[2], "int": v[0] is int} for k, v in PARAM_SPECS.items()}}
 
 

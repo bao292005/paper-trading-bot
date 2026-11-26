@@ -23,7 +23,7 @@ function applyAll() {
 async function loadAll() {
   const seq = ++D.seq;
   D.bars = []; D.volume = []; D.ind = {}; D.oldest = null; D.exhausted = false;
-  const params = { symbol: CH.symbol, tf: CH.tf };
+  const params = { symbol: CH.symbol, tf: CH.tf, asset: CH.asset };
   setLoadStatus("Đang tải " + CH.symbol + "…");
   try {
     const [b, ind] = await Promise.all([getJSON("/api/bars", params), getJSON("/api/indicators", params)]);
@@ -43,7 +43,7 @@ async function loadOlder() {
   if (D.loading || D.exhausted || D.oldest === null) return;
   D.loading = true;
   const seq = D.seq;
-  const params = { symbol: CH.symbol, tf: CH.tf, before: String(D.oldest) };
+  const params = { symbol: CH.symbol, tf: CH.tf, asset: CH.asset, before: String(D.oldest) };
   setLoadStatus("Đang tải dữ liệu cũ hơn…");
   try {
     const [b, ind] = await Promise.all([getJSON("/api/bars", params), getJSON("/api/indicators", params)]);
@@ -70,7 +70,7 @@ async function loadOlder() {
 async function loadMarkers() {
   if (!D.runId) { setMarkers([]); return; }
   try {
-    const m = await getJSON("/api/markers", { symbol: CH.symbol, run_id: D.runId, tf: CH.tf });
+    const m = await getJSON("/api/markers", { symbol: CH.symbol, run_id: D.runId, tf: CH.tf, asset: CH.asset });
     setMarkers([...m.signals, ...m.fills]);
   } catch (e) {
     setMarkers([]);

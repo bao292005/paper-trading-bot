@@ -1,7 +1,8 @@
 // Visual mode: bấm 1 lệnh trong bảng "Lệnh" -> mở khung nến 5m của ngày vào / ngày ra (qua /api/bars).
-const MN = { chart: null, candles: null, lines: [], trade: null, which: "entry", seq: 0 };
-const NY_CLOCK = new Intl.DateTimeFormat("en-GB", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hour12: false });
-const nyHm = (sec) => NY_CLOCK.format(new Date(sec * 1000));
+const MN = { chart: null, candles: null, lines: [], trade: null, which: "entry", seq: 0, asset: "stock" };
+const clock = (tz) => new Intl.DateTimeFormat("en-GB", { timeZone: tz, hour: "2-digit", minute: "2-digit", hour12: false });
+const NY_CLOCK = clock("America/New_York"), UTC_CLOCK = clock("UTC");  // cổ phiếu giờ New York, crypto giờ UTC
+const nyHm = (sec) => (MN.asset === "crypto" ? UTC_CLOCK : NY_CLOCK).format(new Date(sec * 1000));
 
 function initMinute() {
   if (MN.chart) return;
@@ -25,6 +26,7 @@ function minuteLines(t) {  // giá vào/ra, SL, TP của lệnh
 async function showMinute(t, which) {
   MN.trade = t;
   MN.which = which;
+  MN.asset = (TESTER.result && TESTER.result.config.asset) || "stock";
   const day = which === "entry" ? t.entry_date : t.exit_date, seq = ++MN.seq;
   $("v-min").hidden = false;
   initMinute();
@@ -34,7 +36,7 @@ async function showMinute(t, which) {
   $("vm-msg").textContent = "Đang tải…";
   $("vm-msg").className = "small muted";
   try {
-    const r = await getJSON("/api/bars", { symbol: t.symbol, tf: "5m", start: day, end: day + " 23:59:59" });
+    const r = await getJSON("/api/bars", { symbol: t.symbol, tf: "5m", start: day, end: day + " 23:59:59", asset: MN.asset });
     if (seq !== MN.seq) return;
     MN.candles.setData(r.bars);
     for (const l of MN.lines) MN.candles.removePriceLine(l);

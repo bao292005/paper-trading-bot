@@ -3,7 +3,13 @@
 let _botRunning = false;
 
 function botSymbols() {
-  return $("bot-symbols").value.toUpperCase().split(/[\s,;]+/).filter(Boolean);
+  const list = $("bot-symbols").value.toUpperCase().split(/[\s,;]+/).filter(Boolean);
+  return CH.asset === "crypto" ? list.map((s) => (/^[A-Z]{2,5}$/.test(s) ? s + "/USD" : s)) : list;  // "btc" -> "BTC/USD"
+}
+
+// Đổi ô mã của bot theo loại tài sản (crypto: 5 mã whitelist)
+function syncBotAsset() {
+  $("bot-symbols").value = CH.asset === "crypto" ? CRYPTO_SYMBOLS.join(" ") : "AAPL NVDA JPM";
 }
 
 function showBotOutput(text, bad) {
@@ -17,10 +23,10 @@ async function runBot(dry) {
   if (_botRunning) return;
   const symbols = botSymbols();
   if (!symbols.length) { showBotOutput("Nhập ít nhất 1 mã", true); return; }
-  const body = { symbols, dry_run: dry };
+  const body = { symbols, dry_run: dry, asset: CH.asset };  // crypto -> server chạy `paper-bot once --asset crypto`
   if (!dry) {
     const typed = await askConfirm("Chạy bot THẬT 1 vòng",
-      summaryTable([["Mã", symbols.join(", ")], ["Chế độ", "THẬT (gửi lệnh lên tài khoản paper)"], ["Engine", "full"]]) +
+      summaryTable([["Tài sản", CH.asset], ["Mã", symbols.join(", ")], ["Chế độ", "THẬT (gửi lệnh lên tài khoản paper)"], ["Engine", "full"]]) +
       `<p class="err small">Bot có thể gửi lệnh mua/bán thật lên tài khoản paper.</p>`);
     if (typed === null) return;
     body.confirm = typed;

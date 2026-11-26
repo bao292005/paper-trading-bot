@@ -73,6 +73,40 @@ def validate_order(body: Dict[str, Any]) -> Dict[str, Any]:
             "stop_loss": stop_loss, "take_profit": take_profit, "ref_price": ref}
 
 
+def _positive_float(body: Dict[str, Any], key: str, required: bool = False) -> Optional[float]:
+    v = body.get(key)
+    if v is None:
+        if required:
+            raise HTTPException(422, f"thiếu {key}")
+        return None
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or v <= 0:
+        raise HTTPException(422, f"{key} phải là số > 0")
+    return float(v)
+
+
+def validate_crypto_web_order(body: Dict[str, Any], min_qty: float = 0.0) -> Dict[str, Any]:
+    """Lệnh crypto từ web: qty lẻ > 0, market/limit (stop_limit tuỳ chọn), KHÔNG SL/TP, mã đúng dạng "XXX/USD" trong whitelist.
+    Luật cốt lõi dùng lại execution.validate_crypto_order (bot cũng dùng). Trả cùng khung dict như validate_order."""
+    from ...execution import validate_crypto_order
+
+    if body.get("side") not in ("buy", "sell"):
+        raise HTTPException(422, "side phải là buy hoặc sell")
+    otype = body.get("type")
+    limit_price = _positive_float(body, "limit_price", required=otype in ("limit", "stop_limit"))
+    stop_price = _positive_float(body, "stop_price", required=otype == "stop_limit")
+    if otype == "market" and (body.get("limit_price") is not None or body.get("stop_price") is not None):
+        raise HTTPException(422, "lệnh market không có limit_price/stop_price")
+    ref = _positive_float(body, "ref_price")
+    try:
+        validate_crypto_order(body.get("symbol"), body.get("qty"), otype, limit_price, stop_price,
+                              body.get("stop_loss"), body.get("take_profit"), ref, min_qty)
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from None
+    return {"asset": "crypto", "symbol": body["symbol"], "side": body["side"], "type": otype,
+            "qty": float(body["qty"]), "limit_price": limit_price, "stop_price": stop_price,
+            "stop_loss": None, "take_profit": None, "ref_price": ref}
+
+
 def validate_order_id(order_id: str) -> str:
     try:
         return str(uuid.UUID(order_id))

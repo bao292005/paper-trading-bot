@@ -14,8 +14,10 @@ An toàn:
 Các flag trong config.flags giống hệt decision/full_policy (để kết quả live so được với backtest).
 """
 
+import dataclasses
 import json
 import logging
+import math
 import pickle
 import threading
 import time
@@ -26,7 +28,7 @@ import pandas as pd
 from alpaca.trading.enums import QueryOrderStatus
 from alpaca.trading.requests import GetOrdersRequest
 
-from .config import BENCHMARK, UNIVERSE_50, TradingConfig
+from .config import BENCHMARK, CRYPTO_BENCHMARK, CRYPTO_UNIVERSE, UNIVERSE_50, TradingConfig, asset_profile
 from .contracts import Fill, OrderIntent
 from .data.cache import PROJECT_ROOT, load_bars
 from .data.forecast import load_forecasts
@@ -34,7 +36,7 @@ from .data.market_state import build_market_state
 from .decision.calibration import FEATURE_WINDOW
 from .decision.pipeline import DecisionPipeline
 from .decision.regime_switch import RegimeSwitchStrategy
-from .execution import AlpacaExecutor
+from .execution import CRYPTO_MAX_NOTIONAL, AlpacaExecutor, normalize_crypto_symbol
 from .risk import RiskConfig, legacy_position_size, make_order_intent
 from .storage import Store
 from .strategies import MovingAverageCrossoverStrategy, RSIStrategy
@@ -43,6 +45,24 @@ logger = logging.getLogger("paper_bot")
 
 HISTORY_CALENDAR_DAYS = 1000  # ~690 phiên: đủ cho regime (MA200 + median 252) và FEATURE_WINDOW
 RUN_ID_PAPER, RUN_ID_DRY = "live-paper", "live-dry"
+RUN_ID_CRYPTO_PAPER, RUN_ID_CRYPTO_DRY = "live-crypto-paper", "live-crypto-dry"
+
+
+def run_id_for(asset: str, dry_run: bool) -> str:
+    """run_id của LiveBot theo asset và chế độ."""
+    if asset == "crypto":
+        return RUN_ID_CRYPTO_DRY if dry_run else RUN_ID_CRYPTO_PAPER
+    return RUN_ID_DRY if dry_run else RUN_ID_PAPER
+
+
+def now_utc() -> pd.Timestamp:
+    """Giờ hiện tại UTC, không timezone (nến ngày crypto chốt 00:00 UTC)."""
+    return pd.Timestamp.now(tz="UTC").tz_localize(None)
+
+
+def last_closed_day_crypto(now: pd.Timestamp) -> pd.Timestamp:
+    """Crypto giao dịch 24/7, không có giờ mở cửa: nến ĐÃ ĐÓNG = nến ngày UTC của hôm qua."""
+    return now.normalize() - pd.Timedelta(days=1)
 
 
 def now_ny() -> pd.Timestamp:
@@ -135,6 +155,65 @@ def load_or_fit_calibrator(symbols, today: pd.Timestamp, use_fc_feat: bool, path
     return result["cal"], f"đã fit calibrator (train tới {end.date()}), lưu {path}"
 
 
+# ---------- Crypto: calibrator riêng + nguồn nến ----------
+CALIB_PATH_CRYPTO = PROJECT_ROOT / "data" / "models" / "calibrator_crypto.pkl"
+
+
+def fit_live_calibrator_crypto(symbols, end: pd.Timestamp, use_fc_feat: bool):
+    """Fit trên nến crypto [warmup_start, end] (train MỞ RỘNG như prereg), end ≤ calib_end (2024-12-31).
+    Không dùng feature forecast (bảng forecast tính sẵn chỉ có cổ phiếu)."""
+    from .decision.full_policy import _fit_on_train
+
+    start = pd.Timestamp(asset_profile("crypto")["warmup_start"])
+    train = {s: load_bars(s, start=start, end=end, asset="crypto") for s in symbols}
+    bench = load_bars(CRYPTO_BENCHMARK, start=start, end=end, asset="crypto")
+    return _fit_on_train(train, bench, None, False, "isotonic")
+
+
+class CryptoDataManager:
+    """Nến ngày crypto cho LiveBot: cache (data/bars_crypto) trước, thiếu/cũ thì gọi API (không cần key)."""
+
+    def __init__(self, client=None, bars_dir=None):
+        self._client = client
+        self.bars_dir = bars_dir
+
+    @property
+    def client(self):
+        if self._client is None:
+            from alpaca.data.historical import CryptoHistoricalDataClient
+
+            self._client = CryptoHistoricalDataClient()
+        return self._client
+
+    def get_bars(self, symbol: str, start, end) -> pd.DataFrame:
+        """Nến ngày UTC trong [start, end], chỉ dữ liệu ≤ end. Cache còn thiếu nến `end` thì tải từ API
+        (KHÔNG ghi đè cache: cache chỉ do scripts/fetch_crypto_history.py tạo)."""
+        start, end = pd.Timestamp(start), pd.Timestamp(end)
+        cached = load_bars(symbol, bars_dir=self.bars_dir, asset="crypto")
+        if not cached.empty and cached.index[-1] >= end:
+            return cached[(cached.index >= start) & (cached.index <= end)]
+        from .data.sources import fetch_crypto_daily_bars
+
+        try:
+            df = fetch_crypto_daily_bars(self.client, [symbol], start.to_pydatetime(),
+                                         (end + pd.Timedelta(days=1)).to_pydatetime())[symbol]
+        except Exception as e:
+            logger.warning(f"Lỗi tải nến {symbol}: {e} -> dùng cache")
+            df = cached
+        return df[(df.index >= start) & (df.index <= end)]
+
+    def get_latest_price(self, symbol: str) -> Optional[float]:
+        """Giá giao dịch gần nhất (để kiểm tra SL/TP). Lỗi -> None."""
+        try:
+            from alpaca.data.requests import CryptoLatestTradeRequest
+
+            trades = self.client.get_crypto_latest_trade(CryptoLatestTradeRequest(symbol_or_symbols=symbol))
+            return float(trades[symbol].price)
+        except Exception as e:
+            logger.warning(f"Không lấy được giá mới nhất {symbol}: {e}")
+            return None
+
+
 # ---------- Trạng thái kill switch lưu ra file (khởi động lại không mất) ----------
 STATE_PATH = PROJECT_ROOT / "data" / "live_state.json"
 
@@ -198,30 +277,46 @@ class LiveBot:
 
     def __init__(self, config: TradingConfig, trading_client=None, data_manager=None,
                  store: Optional[Store] = None, forecaster=None, risk_cfg: Optional[RiskConfig] = None,
-                 calibrator="auto", state_path=STATE_PATH):
+                 calibrator="auto", state_path=STATE_PATH, exchange_stop: bool = False):
         """calibrator="auto": đọc/fit từ data/models/calibrator.pkl (nếu use_calibration);
-        truyền object/None để dùng thẳng (test)."""
+        truyền object/None để dùng thẳng (test).
+        exchange_stop (chỉ crypto, mặc định TẮT): đặt thêm 1 lệnh stop_limit SL thật lên sàn, xem TICH-HOP.md."""
         self.config = config
-        self.risk_cfg = risk_cfg or RiskConfig()
+        self.asset = config.asset
+        self.crypto = config.asset == "crypto"
+        self.benchmark = CRYPTO_BENCHMARK if self.crypto else BENCHMARK
+        if self.crypto:  # chỉ cho phép CRYPTO_UNIVERSE (đúng dạng "XXX/USD")
+            bad = [s for s in config.symbols if s not in CRYPTO_UNIVERSE]
+            if bad:
+                raise ValueError(f"mã crypto ngoài whitelist {CRYPTO_UNIVERSE}: {bad}")
+        elif exchange_stop:
+            raise ValueError("exchange_stop chỉ dùng cho crypto (cổ phiếu đã có bracket)")
+        self.exchange_stop = exchange_stop
+        self.risk_cfg = risk_cfg or (RiskConfig.for_asset("crypto") if self.crypto else RiskConfig())
         if trading_client is None or data_manager is None:
-            from alpaca.data.historical import StockHistoricalDataClient
             from alpaca.trading.client import TradingClient
-
-            from .data.sources import AlpacaDataManager
 
             # paper=True gắn cứng: KHÔNG BAO GIỜ giao dịch tiền thật
             trading_client = trading_client or TradingClient(config.api_key, config.api_secret, paper=True)
-            data_manager = data_manager or AlpacaDataManager(
-                StockHistoricalDataClient(config.api_key, config.api_secret))
+            if data_manager is None and self.crypto:
+                data_manager = CryptoDataManager()
+            elif data_manager is None:
+                from alpaca.data.historical import StockHistoricalDataClient
+
+                from .data.sources import AlpacaDataManager
+
+                data_manager = AlpacaDataManager(StockHistoricalDataClient(config.api_key, config.api_secret))
         self.client = trading_client
         self.data = data_manager
-        self.store = store or Store(run_id=RUN_ID_DRY if config.dry_run else RUN_ID_PAPER)
-        self.executor = AlpacaExecutor(trading_client, self.store, self.risk_cfg)
+        self.store = store or Store(run_id=run_id_for(self.asset, config.dry_run))
+        self.executor = AlpacaExecutor(trading_client, self.store, self.risk_cfg, asset=self.asset)
+        self._asset_info_cache: dict = {}  # crypto: min_order_size, min_trade_increment... theo mã
 
         self.forecaster = forecaster  # None + use_forecast -> tạo Chronos ở vòng đầu
         self._forecaster_failed = False
         self._fc_cache: dict = {}  # (ngày nến cuối, mã) -> Forecast: loop không tính lại trong ngày
-        self.ref_width = self._ref_width() if config.flags["use_forecast"] else None
+        # Bảng forecast tính sẵn chỉ có cổ phiếu -> crypto không có ref_width (không giảm cỡ theo độ bất định)
+        self.ref_width = self._ref_width() if config.flags["use_forecast"] and not self.crypto else None
 
         if calibrator == "auto":
             calibrator = self._load_calibrator() if config.flags["use_calibration"] else None
@@ -245,6 +340,13 @@ class LiveBot:
                              data={"flags": config.flags, "dry_run": config.dry_run})
 
     def _load_calibrator(self):
+        if self.crypto:  # file riêng, fit trên nến crypto ≤ calib_end (prereg: ≤ 2024-12-31)
+            cal, note = load_or_fit_calibrator(
+                sorted(CRYPTO_UNIVERSE), now_utc().normalize(), False, path=CALIB_PATH_CRYPTO,
+                fit_fn=fit_live_calibrator_crypto, calib_end=self.config.calib_end)
+            logger.warning(note) if cal is None else logger.info(note)
+            self.store.log_event("calibrator", note, level="WARNING" if cal is None else "INFO")
+            return cal
         # Có feature forecast khi bật forecast VÀ có bảng forecast tính sẵn (giống full_policy)
         use_fc_feat = self.ref_width is not None
         symbols = sorted(set(self.config.symbols) | set(UNIVERSE_50))
@@ -283,12 +385,18 @@ class LiveBot:
     def snapshot(self) -> dict:
         """Tài khoản, vị thế, mã đang có lệnh chờ. Lỗi mạng thì để nổi lên (run_cycle bắt)."""
         account = self.client.get_account()
-        positions = {p.symbol: float(p.qty) for p in self.client.get_all_positions()}
+        norm = normalize_crypto_symbol if self.crypto else (lambda s: s)  # broker có thể trả "BTCUSD"
+        positions = {norm(p.symbol): float(p.qty) for p in self.client.get_all_positions()}
         open_orders = self.client.get_orders(filter=GetOrdersRequest(status=QueryOrderStatus.OPEN))
+        if self.crypto:  # cùng tài khoản paper có thể đang giữ cổ phiếu: bot crypto chỉ quản mã trong whitelist
+            positions = {s: q for s, q in positions.items() if s in CRYPTO_UNIVERSE}
+            open_orders = [o for o in open_orders if norm(o.symbol) in CRYPTO_UNIVERSE]
+        stop_ids = self._stop_order_ids()  # lệnh stop_limit bảo vệ của chính bot không tính là "lệnh chờ"
         return {"equity": float(account.equity), "cash": float(account.cash),
                 "last_equity": float(getattr(account, "last_equity", 0) or 0),  # equity cuối phiên trước
                 "long_value": float(getattr(account, "long_market_value", 0) or 0),
-                "positions": positions, "open_symbols": {o.symbol for o in open_orders}}
+                "positions": positions,
+                "open_symbols": {norm(o.symbol) for o in open_orders if str(o.id) not in stop_ids}}
 
     def load_bars(self, symbols: List[str], cutoff: pd.Timestamp) -> Dict[str, pd.DataFrame]:
         """Nến ĐÃ ĐÓNG ≤ cutoff (cache trước, thiếu thì API). Mã lỗi/rỗng bị bỏ, có ghi event."""
@@ -349,14 +457,22 @@ class LiveBot:
             return intent
         price = float(bars["close"].iloc[-1])
         if not self.config.flags["use_atr_sizing"]:
-            intent.qty = legacy_position_size(snap["cash"], price)
+            intent.qty = legacy_position_size(snap["cash"], price,
+                                              qty_decimals=self.risk_cfg.qty_decimals if self.crypto else None)
         if not self.config.flags["use_bracket"]:
             intent.stop_loss = intent.take_profit = None
+        if self.crypto:  # làm tròn theo sàn; quá nhỏ thì bỏ
+            intent.qty = self.fit_crypto_qty(sym, intent.qty, price)
+            if intent.qty <= 0:
+                logger.info(f"{sym}: qty sau làm tròn theo sàn = 0 (< min_order_size) -> bỏ")
+                return None
         snap["cash"] -= intent.qty * price  # tính luôn cho mã sau
         snap["positions"][sym] = intent.qty
         return intent
 
     def send(self, intent: OrderIntent) -> None:
+        if self.crypto:
+            return self._send_crypto(intent)
         if self.config.dry_run:
             if intent.side == "buy" and self.executor.halted:  # giống executor.submit khi bị ngắt
                 self.store.log_order(intent, status="blocked")
@@ -368,19 +484,167 @@ class LiveBot:
         else:
             self.executor.submit(intent)
 
+    # ---------- crypto: lệnh, làm tròn, SL/TP tự quản ----------
+    def _save_state(self) -> None:
+        save_state(self.state_path, self.store.run_id, self.state)
+
+    def _stop_order_ids(self) -> set:
+        return {str(v["stop_order_id"]) for v in self.state.get("sltp", {}).values() if v.get("stop_order_id")}
+
+    def asset_info(self, sym: str) -> dict:
+        """min_order_size, min_trade_increment, price_increment của mã (Assets API); lỗi -> mặc định an toàn."""
+        if sym not in self._asset_info_cache:
+            info = {"min_order_size": 0.0, "min_trade_increment": 10.0 ** -self.risk_cfg.qty_decimals,
+                    "price_increment": 0.01}
+            try:
+                a = self.client.get_asset(sym)
+                for k in info:
+                    v = getattr(a, k, None)
+                    if v:
+                        info[k] = float(v)
+            except Exception as e:
+                logger.warning(f"{sym}: không lấy được thông tin asset ({e}) -> dùng mặc định")
+            self._asset_info_cache[sym] = info
+        return self._asset_info_cache[sym]
+
+    def fit_crypto_qty(self, sym: str, qty: float, price: float) -> float:
+        """Làm tròn XUỐNG theo min_trade_increment, chặn trần 200k$/lệnh; < min_order_size -> 0."""
+        info = self.asset_info(sym)
+        qty = min(qty, CRYPTO_MAX_NOTIONAL / price) if price > 0 else qty
+        inc = info["min_trade_increment"]
+        qty = round(math.floor(round(qty / inc, 6)) * inc, 9)  # round(.., 6) chống sai số số thực
+        return qty if qty > 0 and qty >= info["min_order_size"] else 0.0
+
+    def _send_crypto(self, intent: OrderIntent) -> None:
+        """Gửi lệnh crypto. SL/TP KHÔNG gắn vào lệnh: cất vào state (pending) tới khi lệnh mua khớp."""
+        levels = None
+        if intent.side == "buy" and intent.stop_loss and intent.take_profit:
+            levels = {"stop_loss": intent.stop_loss, "take_profit": intent.take_profit, "asof": str(intent.asof)}
+        if self.config.dry_run:  # log lệnh gốc (kèm SL/TP dự kiến) vào DB, KHÔNG gọi broker
+            if intent.side == "buy" and self.executor.halted:
+                self.store.log_order(intent, status="blocked")
+                self.store.log_event("order_blocked", f"Kill switch đang ngắt: chặn MUA {intent.symbol}",
+                                     level="WARNING")
+                return
+            self.store.log_order(intent, status="dry_run")
+            logger.info(f"[DRY-RUN] {intent.side} {intent.qty} {intent.symbol} (không gửi)")
+            return
+        if intent.side == "sell":
+            self._cancel_exchange_stop(intent.symbol)  # stop_limit trên sàn đang giữ qty -> huỷ trước khi bán
+        if levels:
+            intent = dataclasses.replace(
+                intent, stop_loss=None, take_profit=None,
+                reason=f"{intent.reason} | SL {levels['stop_loss']} TP {levels['take_profit']} (bot tự quản)")
+        order_id = self.executor.submit(intent)
+        if order_id is None:
+            return
+        if levels:
+            self.state.setdefault("pending", {})[intent.symbol] = {**levels, "order_id": order_id}
+        if intent.side == "sell":
+            self.state.get("sltp", {}).pop(intent.symbol, None)
+        self._save_state()
+
+    def _cancel_exchange_stop(self, sym: str) -> None:
+        oid = self.state.get("sltp", {}).get(sym, {}).get("stop_order_id")
+        if not oid:
+            return
+        try:
+            self.client.cancel_order_by_id(str(oid))
+        except Exception as e:  # vd stop đã khớp/đã huỷ
+            self.store.log_event("cancel_error", f"{sym} stop {oid}: {e}", level="WARNING")
+        self.state["sltp"][sym].pop("stop_order_id", None)
+
+    def promote_pending(self, snap: dict) -> None:
+        """Lệnh mua đã khớp (có vị thế trên broker) -> SL/TP chuyển từ pending sang sltp (dùng để tự quản)."""
+        pending = self.state.get("pending", {})
+        for sym, p in list(pending.items()):
+            qty = snap["positions"].get(sym, 0)
+            if qty > 0:
+                self.state.setdefault("sltp", {})[sym] = {"stop_loss": p["stop_loss"],
+                                                          "take_profit": p["take_profit"], "asof": p.get("asof")}
+                del pending[sym]
+                self.store.log_event("sltp_armed", f"{sym}: SL {p['stop_loss']} TP {p['take_profit']} (qty {qty})")
+                if self.exchange_stop:
+                    self._place_exchange_stop(sym, qty, p["stop_loss"])
+            elif sym not in snap["open_symbols"] and self._order_dead(p.get("order_id")):
+                del pending[sym]  # lệnh mua bị huỷ/từ chối, không có vị thế: bỏ SL/TP đã cất
+                self.store.log_event("sltp_dropped", f"{sym}: lệnh mua {p.get('order_id')} không khớp", level="WARNING")
+        self._save_state()
+
+    def _order_dead(self, order_id) -> bool:
+        """Lệnh đã huỷ/hết hạn/bị từ chối mà không khớp phần nào. Không chắc (lỗi mạng) -> False (giữ pending)."""
+        try:
+            o = self.client.get_order_by_id(str(order_id))
+        except Exception:
+            return False
+        status = str(getattr(o.status, "value", o.status)).lower()
+        return status in ("canceled", "expired", "rejected") and not float(getattr(o, "filled_qty", 0) or 0)
+
+    def _place_exchange_stop(self, sym: str, qty: float, stop: float) -> None:
+        """Tuỳ chọn: stop_limit bán trên sàn (stop = SL, limit thấp hơn 0.5% để dễ khớp)."""
+        if self.config.dry_run:
+            return
+        inc = self.asset_info(sym)["price_increment"]
+        stop_p = round(round(stop / inc) * inc, 9)
+        limit_p = round(math.floor(stop * 0.995 / inc) * inc, 9)
+        oid = self.executor.submit_protective_stop(sym, qty, stop_p, limit_p)
+        if oid:
+            self.state["sltp"][sym]["stop_order_id"] = oid
+
+    def check_sl_tp(self, snap: dict) -> set:
+        """Mỗi vòng: giá mới nhất ≤ SL hoặc ≥ TP -> bán market TOÀN BỘ qty THỰC trên broker.
+        Trả tập mã đã gửi lệnh bán (vòng này không ra quyết định thêm cho các mã đó)."""
+        sold = set()
+        for sym, lv in list(self.state.get("sltp", {}).items()):
+            try:
+                qty = snap["positions"].get(sym, 0)
+                if qty <= 0:  # vị thế đã đóng (stop trên sàn khớp, bán tay...) -> dọn
+                    del self.state["sltp"][sym]
+                    self.store.log_event("sltp_cleared", f"{sym}: không còn vị thế, bỏ SL/TP")
+                    continue
+                if sym in snap["open_symbols"]:
+                    continue  # đang có lệnh chờ khác của mã này
+                price = self.data.get_latest_price(sym)
+                if price is None:
+                    logger.warning(f"{sym}: không có giá mới nhất, bỏ qua kiểm tra SL/TP vòng này")
+                    continue
+                hit = ("sl_hit" if lv.get("stop_loss") and price <= lv["stop_loss"]
+                       else "tp_hit" if lv.get("take_profit") and price >= lv["take_profit"] else None)
+                if hit is None:
+                    continue
+                msg = f"{sym}: giá {price} {'≤ SL' if hit == 'sl_hit' else '≥ TP'} -> bán {qty} (toàn bộ vị thế thực)"
+                self.store.log_event(hit, msg, level="WARNING", data={"price": price, **lv, "qty": qty})
+                logger.warning(msg)
+                self.send(OrderIntent(sym, "sell", qty, reason=f"{hit} @ {price}"))
+                sold.add(sym)
+            except Exception as e:
+                self._symbol_error(sym, f"lỗi kiểm tra SL/TP: {e}")
+        self._save_state()
+        return sold
+
     # ---------- vòng ----------
     def run_cycle(self) -> None:
         logger.info("=== Bắt đầu vòng (engine full) ===")
+        sold: set = set()
         try:
-            is_open = self.client.get_clock().is_open
-            if not is_open:
-                logger.warning("Thị trường đang ĐÓNG: lệnh sẽ xếp hàng tới phiên sau")
+            if self.crypto:  # 24/7: không kiểm tra giờ thị trường
+                cutoff = last_closed_day_crypto(now_utc())
+            else:
+                is_open = self.client.get_clock().is_open
+                if not is_open:
+                    logger.warning("Thị trường đang ĐÓNG: lệnh sẽ xếp hàng tới phiên sau")
             if not self._reconciled:
                 self.reconcile_at_start()
             snap = self.snapshot()
-            cutoff = last_closed_day(is_open, now_ny())
+            if self.crypto:  # SL/TP tự quản chạy TRƯỚC khi tải nến: lỗi dữ liệu không được chặn việc cắt lỗ
+                if not self.config.dry_run:
+                    self.promote_pending(snap)
+                sold = self.check_sl_tp(snap)
+            else:
+                cutoff = last_closed_day(is_open, now_ny())
             logger.info(f"Chỉ dùng nến ĐÃ ĐÓNG ≤ {cutoff.date()} (bỏ nến phiên chưa kết thúc, như backtest)")
-            all_bars = self.load_bars(list(self.config.symbols) + [BENCHMARK], cutoff)
+            bm = self.benchmark
+            all_bars = self.load_bars(list(self.config.symbols) + [bm] * (bm not in self.config.symbols), cutoff)
             # Mã đang nắm ngoài --symbols: chỉ tải nến để kiểm tra tương quan, KHÔNG ra quyết định
             extra = [s for s, q in snap["positions"].items() if q > 0 and s not in all_bars
                      and s not in self.config.symbols]
@@ -389,17 +653,24 @@ class LiveBot:
             logger.error(f"Lỗi đầu vòng, bỏ qua vòng này: {e}")
             self.store.log_event("cycle_error", str(e), level="ERROR")
             return
-        spy = all_bars.pop(BENCHMARK, None)
-        if spy is None:  # thiếu SPY -> regime "unknown"
+        # Crypto: BTC vừa là benchmark vừa là mã giao dịch -> giữ lại trong all_bars
+        spy = all_bars.get(bm) if self.crypto and bm in self.config.symbols else all_bars.pop(bm, None)
+        if spy is None:  # thiếu benchmark -> regime "unknown"
             spy = pd.DataFrame(columns=["close"], index=pd.DatetimeIndex([], name="date"))
         snap["bars"] = {**extra_bars, **all_bars}
         asof = max(b.index[-1] for b in all_bars.values()) if all_bars else cutoff
         fcs = self.forecasts(all_bars, asof)
 
         sells, buys = [], []
+        acted = self.state.setdefault("acted", {}) if self.crypto else {}
         for sym, bars in all_bars.items():
             if bars.index[-1] != asof:  # như full_policy: mã không có phiên mới nhất thì bỏ
                 logger.warning(f"{sym}: nến cuối {bars.index[-1].date()} ≠ {asof.date()}, bỏ qua")
+                continue
+            if sym in sold:
+                continue  # vừa bán theo SL/TP
+            if self.crypto and acted.get(sym) == str(asof.date()):
+                logger.info(f"{sym}: đã ra lệnh cho nến {asof.date()}, vòng sau mới xét lại (tránh vào lại ngay sau SL/TP)")
                 continue
             try:
                 intent = self.decide_symbol(sym, bars, spy, fcs.get(sym), snap)
@@ -411,8 +682,17 @@ class LiveBot:
         for intent in sells + buys:  # bán trước (giảm rủi ro), mua sau
             try:
                 self.send(intent)
+                if self.crypto:
+                    acted[intent.symbol] = str(asof.date())
             except Exception as e:
                 self._symbol_error(intent.symbol, f"lỗi gửi lệnh: {e}")
+        if self.crypto:
+            if buys and not self.config.dry_run:
+                try:  # lệnh mua market thường khớp ngay -> gắn SL/TP luôn, không đợi vòng sau
+                    self.promote_pending(self.snapshot())
+                except Exception as e:
+                    logger.warning(f"Chưa gắn được SL/TP ngay ({e}); vòng sau thử lại")
+            self._save_state()
         self.sync_fills()
         account = self.log_equity()
         if account is not None:
@@ -487,7 +767,9 @@ class LiveBot:
                                                              "peak": peak})
         else:
             self.executor.check_kill_switch(equity, day_start, peak)
-        self.state = {"halted": self.executor.halted, "day": today_ny().date().isoformat(),
+        day = now_utc().date().isoformat() if self.crypto else today_ny().date().isoformat()
+        # gộp vào state cũ để giữ pending/sltp/acted của crypto
+        self.state = {**self.state, "halted": self.executor.halted, "day": day,
                       "day_start_equity": day_start, "peak_equity": peak}
         save_state(self.state_path, self.store.run_id, self.state)
         return self.executor.halted
@@ -506,11 +788,12 @@ class LiveBot:
             return None
 
     def run_continuous(self, interval_minutes: int = 30) -> None:
-        """Mỗi `interval_minutes` phút một vòng khi thị trường mở. Ctrl+C để dừng."""
+        """Mỗi `interval_minutes` phút một vòng khi thị trường mở (crypto: luôn chạy, kể cả cuối tuần).
+        Ctrl+C để dừng."""
         try:
             while True:
                 try:
-                    if self.client.get_clock().is_open:
+                    if self.crypto or self.client.get_clock().is_open:
                         self.run_cycle()
                     else:
                         logger.info("Thị trường đang đóng cửa, chờ...")

@@ -63,10 +63,22 @@ async function initTester() {
   initVisualControls();
   initMinuteControls();
   TESTER.onShow.chart =() => { if (TC.chart) TC.chart.timeScale().fitContent(); };
+  $("s-asset").onchange = changeAsset;
   try {
-    TESTER.opts = await getJSON("/api/tester/options");
+    TESTER.opts = await getJSON("/api/tester/options", { asset: $("s-asset").value });
     buildForm(TESTER.opts);
     initOptimization();
+  } catch (e) {
+    setMsg("Không tải được danh sách mã: " + e.message, "err");
+  }
+}
+
+// Đổi Stock/Crypto: tải lại danh sách mã, ngày, phí mặc định (kết quả cũ vẫn giữ nguyên asset của nó)
+async function changeAsset() {
+  try {
+    TESTER.opts = await getJSON("/api/tester/options", { asset: $("s-asset").value });
+    buildForm(TESTER.opts);
+    setMsg("Đã đổi sang " + TESTER.opts.asset + ": mã, ngày, phí mặc định theo loại tài sản.");
   } catch (e) {
     setMsg("Không tải được danh sách mã: " + e.message, "err");
   }

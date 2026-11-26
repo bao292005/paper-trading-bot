@@ -6,6 +6,7 @@
 """
 
 import logging
+import math
 from typing import Optional, Tuple
 
 from alpaca.common.exceptions import APIError
@@ -14,14 +15,50 @@ from alpaca.trading.requests import (
     GetOrdersRequest,
     LimitOrderRequest,
     MarketOrderRequest,
+    StopLimitOrderRequest,
     StopLossRequest,
     TakeProfitRequest,
 )
 
+from .config import CRYPTO_UNIVERSE
 from .contracts import OrderIntent
 from .risk import RiskConfig
 
 logger = logging.getLogger("paper_bot")
+
+# ---- Crypto (Alpaca): market | limit | stop_limit, tif gtc, KHÔNG bracket/OCO, tối đa 200k$/lệnh ----
+CRYPTO_ORDER_TYPES = ("market", "limit", "stop_limit")
+CRYPTO_MAX_NOTIONAL = 200_000.0
+
+
+def normalize_crypto_symbol(symbol: str) -> str:
+    """Positions của Alpaca có thể trả "BTCUSD" (không dấu /), lệnh dùng "BTC/USD" -> đưa về "BTC/USD"."""
+    if "/" not in symbol and symbol.endswith("USD") and len(symbol) > 3:
+        return f"{symbol[:-3]}/USD"
+    return symbol
+
+
+def validate_crypto_order(symbol, qty, order_type="market", limit_price=None, stop_price=None,
+                          stop_loss=None, take_profit=None, ref_price=None, min_qty=0.0) -> None:
+    """Kiểm tra lệnh crypto (hàm thuần). Sai -> ValueError (tiếng Việt). Bot và web dùng chung.
+    ref_price: giá tham chiếu để tính notional với lệnh market (không có thì chỉ kiểm tra khi có limit)."""
+    if symbol not in CRYPTO_UNIVERSE:  # đúng dạng "XXX/USD", không mở rộng whitelist
+        raise ValueError(f"mã crypto không nằm trong whitelist {CRYPTO_UNIVERSE}: {symbol!r}")
+    if order_type not in CRYPTO_ORDER_TYPES:
+        raise ValueError(f"loại lệnh crypto chỉ có {CRYPTO_ORDER_TYPES}, nhận: {order_type!r}")
+    if stop_loss is not None or take_profit is not None:
+        raise ValueError("lệnh crypto không có bracket/OCO: SL/TP do bot tự quản, không gắn vào lệnh")
+    if isinstance(qty, bool) or not isinstance(qty, (int, float)) or not math.isfinite(qty) or qty <= 0:
+        raise ValueError("qty phải là số > 0")
+    if qty < min_qty:
+        raise ValueError(f"qty {qty} nhỏ hơn mức tối thiểu của sàn {min_qty}")
+    for name, v, need in (("limit_price", limit_price, order_type in ("limit", "stop_limit")),
+                          ("stop_price", stop_price, order_type == "stop_limit")):
+        if need and (isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or v <= 0):
+            raise ValueError(f"lệnh {order_type} cần {name} > 0")
+    price = limit_price if order_type in ("limit", "stop_limit") else ref_price
+    if price is not None and qty * price > CRYPTO_MAX_NOTIONAL:
+        raise ValueError(f"giá trị lệnh {qty * price:,.0f}$ vượt trần {CRYPTO_MAX_NOTIONAL:,.0f}$/lệnh")
 
 
 class KillSwitch:
@@ -44,9 +81,10 @@ class KillSwitch:
 
 
 class AlpacaExecutor:
-    def __init__(self, trading_client, store, cfg: Optional[RiskConfig] = None):
+    def __init__(self, trading_client, store, cfg: Optional[RiskConfig] = None, asset: str = "stock"):
         self.client = trading_client
         self.store = store
+        self.asset = asset  # "crypto": không bracket, tif gtc, qty lẻ, kiểm tra whitelist
         self.kill_switch = KillSwitch(cfg or RiskConfig())
         self.halted = False  # True sau khi kill switch ngắt: chặn lệnh MUA mới
 
@@ -90,7 +128,36 @@ class AlpacaExecutor:
         self.store.log_event("kill_switch", "Đã gỡ chặn (resume)")
 
     # ---- đặt lệnh ----
+    def _build_crypto_request(self, intent: OrderIntent):
+        """Crypto: market/limit, tif GTC, qty lẻ, KHÔNG bracket (SL/TP do bot tự quản)."""
+        kwargs = dict(symbol=intent.symbol, qty=intent.qty, side=OrderSide(intent.side.lower()),
+                      time_in_force=TimeInForce.GTC)
+        if intent.order_type == "limit":
+            return LimitOrderRequest(limit_price=intent.limit_price, **kwargs)
+        return MarketOrderRequest(**kwargs)
+
+    def submit_protective_stop(self, symbol: str, qty: float, stop_price: float,
+                               limit_price: float) -> Optional[str]:
+        """(Tuỳ chọn, mặc định TẮT ở LiveBot) đặt 1 lệnh stop_limit BÁN lên sàn để bảo vệ khi bot không chạy.
+        Lệnh này giữ (lock) qty nên bot phải huỷ nó trước khi tự bán. Trả id lệnh hoặc None nếu lỗi."""
+        intent = OrderIntent(symbol, "sell", qty, order_type="stop_limit", limit_price=limit_price,
+                             reason=f"stop-limit bảo vệ trên sàn @ stop {stop_price}")
+        try:
+            validate_crypto_order(symbol, qty, "stop_limit", limit_price=limit_price, stop_price=stop_price)
+            order = self.client.submit_order(StopLimitOrderRequest(
+                symbol=symbol, qty=qty, side=OrderSide.SELL, time_in_force=TimeInForce.GTC,
+                stop_price=stop_price, limit_price=limit_price))
+        except (APIError, ValueError) as e:
+            self.store.log_order(intent, status="rejected")
+            self.store.log_event("order_error", f"{symbol} stop_limit: {e}", level="ERROR")
+            return None
+        broker_id = str(order.id)
+        self.store.log_order(intent, broker_order_id=broker_id, status="submitted")
+        return broker_id
+
     def _build_request(self, intent: OrderIntent):
+        if self.asset == "crypto":
+            return self._build_crypto_request(intent)
         side = OrderSide(intent.side.lower())
         is_bracket = intent.side.lower() == "buy" and intent.stop_loss and intent.take_profit
         kwargs = dict(symbol=intent.symbol, qty=intent.qty, side=side,
@@ -107,6 +174,14 @@ class AlpacaExecutor:
         """Gửi lệnh, ghi vào bảng orders. Trả id lệnh của broker, hoặc None nếu bị chặn/lỗi."""
         if intent.qty <= 0:
             return None
+        if self.asset == "crypto":  # chặn mã lạ / có SL-TP / vượt trần TRƯỚC khi gọi broker
+            try:
+                validate_crypto_order(intent.symbol, intent.qty, intent.order_type, intent.limit_price,
+                                      stop_loss=intent.stop_loss, take_profit=intent.take_profit)
+            except ValueError as e:
+                self.store.log_order(intent, status="rejected")
+                self.store.log_event("order_rejected", f"{intent.symbol}: {e}", level="ERROR")
+                return None
         if intent.side.lower() == "buy" and self.halted:
             self.store.log_event("order_blocked", f"Kill switch đang ngắt: chặn MUA {intent.symbol}",
                                  level="WARNING")
@@ -152,7 +227,8 @@ class AlpacaExecutor:
         expected: dict = {}
         for symbol, side, qty in q("SELECT symbol, side, qty FROM fills WHERE run_id=?", (run,)):
             expected[symbol] = expected.get(symbol, 0.0) + (qty if side.lower() == "buy" else -qty)
-        actual = {p.symbol: float(p.qty) for p in self.client.get_all_positions()}
+        norm = normalize_crypto_symbol if self.asset == "crypto" else (lambda s: s)
+        actual = {norm(p.symbol): float(p.qty) for p in self.client.get_all_positions()}
         for symbol in sorted(set(expected) | set(actual)):
             exp, act = expected.get(symbol, 0.0), actual.get(symbol, 0.0)
             if abs(exp - act) > 1e-6:

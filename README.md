@@ -50,6 +50,21 @@ Chi tiết luồng: [docs/quy-trinh.md](docs/quy-trinh.md).
   Chỉ gỡ ngắt bằng `--reset-kill-switch` sau khi đã xem lại.
 - `--dry-run` không gửi hay huỷ lệnh nào. Lệnh dự kiến được ghi vào DB với `run_id="live-dry"`, `status="dry_run"`.
 
+## Crypto (`--asset crypto`)
+```bash
+uv run paper-bot once --asset crypto --dry-run            # 1 vòng crypto, KHÔNG gửi lệnh (nên thử trước)
+uv run paper-bot loop --asset crypto --interval 60        # mặc định 60 phút/vòng, chạy cả cuối tuần
+uv run paper-bot once --asset crypto --exchange-stop      # thêm stop-limit bán trên sàn (mặc định TẮT)
+```
+- Chỉ 5 mã `BTC/USD ETH/USD SOL/USD AVAX/USD LINK/USD`, chỉ engine `full` (`--engine legacy` bị từ chối). Số lượng lẻ, phí 25 bps,
+  nến ngày đóng theo UTC, lệnh GTC. Tiêu chí đánh giá: [docs/prereg-crypto.md](docs/prereg-crypto.md).
+- **SL/TP do bot tự quản**: Alpaca crypto không có bracket/OCO, nên lệnh mua gửi KHÔNG kèm SL/TP; mức SL/TP lưu trong
+  `data/live_state.json` và được kiểm mỗi vòng (bán market toàn bộ qty thực khi chạm). Không kiểm realtime: độ trễ tối đa bằng `--interval`.
+- Kill switch chặn MUA nhưng KHÔNG chặn bán SL/TP. Run_id riêng cho crypto (`report`, `--reset-kill-switch` đi theo `--asset`).
+- Web (`/`): ô chọn Stock/Crypto, form lệnh crypto (qty lẻ, market/limit/stop-limit, không SL/TP, vẫn cần `XAC NHAN`).
+  `/tester`: ô chọn loại tài sản (dev 2022–2024, tối đa 2024-12-31, phí 25 bps, IS 2022–2023 / OOS 2024). UI Streamlit trang "Điều khiển" có ô chọn tương tự.
+- Cảnh báo: equity/cash lấy theo tài khoản chung (gồm cổ phiếu đang giữ); cấu hình crypto cũng chưa chạy holdout. Chi tiết: [docs/cai-tien/CRYPTO-LIVE.md](docs/cai-tien/CRYPTO-LIVE.md).
+
 ## Giao diện (UI Streamlit)
 ```bash
 uv run streamlit run src/paper_bot/ui/app.py
@@ -59,7 +74,7 @@ Giao diện tiếng Việt, nhiều trang (mỗi trang có dòng "Trang này cho
 - **1. Pipeline**: chọn mã + ngày, xem P1 (nến, MA, regime, fan chart forecast, features, tin), P2 (mọi tín hiệu, veto, Signal cuối), P3 (lệnh dự kiến, MÔ PHỎNG), hoặc quét N phiên. Bật/tắt 6 thành phần như `--disable`.
 - **2. Đánh giá**: equity/drawdown các run `bt-*`, bảng ablation, calibration, forecast (đọc `docs/ket-qua/`). Chỉ là giai đoạn phát triển, holdout chưa chạy.
 - **3. Giám sát**: tài khoản Alpaca paper (chỉ đọc), signals/orders/fills/events trong DB, trạng thái kill switch.
-- **4. Điều khiển**: chạy thử `once --dry-run`; chạy THẬT `once` chỉ khi tick đồng ý **và** gõ đúng `XAC NHAN` (ghi event `ui_real_run` vào DB); gỡ kill switch cũng cần xác nhận. Không có nút loop (loop chạy ở terminal, UI chỉ hiện câu lệnh để chép).
+- **4. Điều khiển**: chạy thử `once --dry-run`; chạy THẬT `once` chỉ khi tick đồng ý **và** gõ đúng `XAC NHAN` (ghi event `ui_real_run` vào DB); gỡ kill switch cũng cần xác nhận. Có ô chọn Stock/Crypto (crypto: 5 mã whitelist, chỉ engine full). Không có nút loop (loop chạy ở terminal, UI chỉ hiện câu lệnh để chép).
 
 An toàn: lệnh được ghép từ lựa chọn có whitelist (mã chữ HOA A-Z, cờ `--disable` theo danh sách), chạy bằng `subprocess` dạng list (không shell), timeout 10 phút; hàm chạy lệnh tự chặn lệnh thật nếu chưa xác nhận. Test (`tests/test_ui_*.py`) chạy offline, subprocess và TradingClient đều bị giả.
 

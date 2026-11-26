@@ -3,13 +3,19 @@ const NY_TZ = "America/New_York";
 const MA_COLORS = { ma10: "#f7c948", ma30: "#2196f3", ma200: "#e040fb" };
 const CH = {
   chart: null, candles: null, volume: null, ma: {}, rsi: null, markerApi: null,
-  lines: [], markerByTime: new Map(), symbol: "AAPL", tf: "1D",
+  lines: [], markerByTime: new Map(), symbol: "AAPL", tf: "1D", asset: "stock",
 };
 
-const _fmtClock = new Intl.DateTimeFormat("en-GB", { timeZone: NY_TZ, hour: "2-digit", minute: "2-digit", hour12: false });
-const _fmtDay = new Intl.DateTimeFormat("en-CA", { timeZone: NY_TZ, year: "numeric", month: "2-digit", day: "2-digit" });
+let _fmtClock, _fmtDay;
+// Cổ phiếu hiển thị giờ New York, crypto hiển thị UTC (nến ngày crypto cắt ở 00:00 UTC)
+function setChartTz(asset) {
+  const tz = asset === "crypto" ? "UTC" : NY_TZ;
+  _fmtClock = new Intl.DateTimeFormat("en-GB", { timeZone: tz, hour: "2-digit", minute: "2-digit", hour12: false });
+  _fmtDay = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" });
+}
+setChartTz("stock");
 
-// `time` từ server là unix giây UTC; hiển thị theo giờ New York
+// `time` từ server là unix giây UTC; hiển thị theo giờ New York (crypto: UTC)
 function nyClock(sec) { return _fmtClock.format(new Date(sec * 1000)); }
 function nyDay(sec) { return _fmtDay.format(new Date(sec * 1000)); }
 function nyLabel(sec) { return CH.tf === "1D" ? nyDay(sec) : nyDay(sec) + " " + nyClock(sec); }

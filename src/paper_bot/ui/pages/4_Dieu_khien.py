@@ -5,7 +5,7 @@ import shlex
 
 import streamlit as st
 
-from paper_bot.config import ENGINES, SHORT_FLAG_NAMES, UNIVERSE_50
+from paper_bot.config import CRYPTO_UNIVERSE, ENGINES, SHORT_FLAG_NAMES, UNIVERSE_50
 from paper_bot.ui import core
 
 st.set_page_config(page_title="Điều khiển bot", layout="wide")
@@ -33,10 +33,17 @@ def show_result(res: dict):
 # ---------------------------- lựa chọn ----------------------------
 st.subheader("Chọn tham số")
 c1, c2 = st.columns(2)
-picked = c1.multiselect("Mã cổ phiếu", UNIVERSE_50, default=core.DEFAULT_UI_SYMBOLS, key="symbols")
-extra = c1.text_input("Mã khác (chữ HOA, cách nhau bằng dấu cách)", key="extra",
-                      help="Chỉ nhận chữ HOA A-Z, tối đa 6 ký tự mỗi mã.")
-engine = c2.radio("Engine", ENGINES, key="engine", horizontal=True,
+asset = c1.radio("Loại tài sản", ["stock", "crypto"], key="asset", horizontal=True,
+                 help="crypto: 5 mã whitelist, chạy 24/7, mua lẻ, SL/TP do bot tự quản, chỉ engine full.")
+if asset == "crypto":
+    picked = c1.multiselect("Mã crypto", CRYPTO_UNIVERSE, default=CRYPTO_UNIVERSE, key="symbols_crypto")
+    extra = ""
+else:
+    picked = c1.multiselect("Mã cổ phiếu", UNIVERSE_50, default=core.DEFAULT_UI_SYMBOLS, key="symbols")
+    extra = c1.text_input("Mã khác (chữ HOA, cách nhau bằng dấu cách)", key="extra",
+                          help="Chỉ nhận chữ HOA A-Z, tối đa 6 ký tự mỗi mã.")
+engine = c2.radio("Engine", ["full"] if asset == "crypto" else ENGINES, key="engine_crypto" if asset == "crypto" else "engine",
+                  horizontal=True,
                   help="full = pipeline mới; legacy = bot gốc của bài (MA + RSI).")
 disable = c2.multiselect("Tắt thành phần (--disable)", SHORT_FLAG_NAMES, key="disable",
                          disabled=engine == "legacy", help="Chỉ dùng được với engine full.")
@@ -46,7 +53,8 @@ interval = c2.number_input("Chu kỳ loop (phút) - chỉ để tạo câu lện
 
 symbols = picked + [s for s in extra.split() if s not in picked]
 try:
-    dry_cmd = core.build_once_command(symbols, engine, disable if engine == "full" else (), llm, dry_run=True)
+    dry_cmd = core.build_once_command(symbols, engine, disable if engine == "full" else (), llm, dry_run=True,
+                                      asset=asset)
 except ValueError as e:
     st.error(f"Tham số không hợp lệ, chưa tạo được lệnh: {e}")
     st.stop()
@@ -68,7 +76,7 @@ ok = core.confirmed(ack, word)
 if st.button("Chạy THẬT", key="run_real", disabled=not ok, type="primary"):
     try:
         real_cmd = core.build_once_command(symbols, engine, disable if engine == "full" else (), llm,
-                                           dry_run=False, ack=ack, confirm_text=word)
+                                           dry_run=False, ack=ack, confirm_text=word, asset=asset)
         core.log_ui_event(core.real_run_id(False), "ui_real_run", f"UI gửi lệnh thật: {shlex.join(real_cmd)}")
         with st.spinner("Đang chạy THẬT..."):
             show_result(core.run_command(real_cmd, allow_real=ok))
@@ -94,5 +102,5 @@ if st.button("Gỡ kill switch", key="run_ks", disabled=not ks_ok):
 st.subheader("4. Chạy liên tục (loop)")
 st.info("UI KHÔNG chạy loop. Muốn chạy liên tục, chép câu lệnh này vào terminal (Ctrl+C để dừng). "
         "Bỏ `--dry-run` nếu muốn đặt lệnh thật.")
-st.code(core.loop_command_text(symbols, engine, disable if engine == "full" else (), llm, True, int(interval)),
+st.code(core.loop_command_text(symbols, engine, disable if engine == "full" else (), llm, True, int(interval), asset),
         language="bash")

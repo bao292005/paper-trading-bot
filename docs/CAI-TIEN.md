@@ -42,6 +42,10 @@ P1 Tiên (DataManager) --MarketState--> P2 Lanh (Strategy) --Signal--> P3 Mfan (
 | — | Web app kiểu TradingView (nến 1m–1D realtime, markers bot, đặt lệnh paper) | ✅ | `web/`, [cai-tien/WEB.md](cai-tien/WEB.md) |
 | — | Strategy Tester kiểu MT5 (báo cáo, visual replay, fill nến phút, tối ưu IS/OOS) | ✅ | `backtest/tester/`, `web/` trang `/tester`, [cai-tien/TESTER.md](cai-tien/TESTER.md) |
 | — | Chạy HOLDOUT 2025-01 → 2026-10 (1 lần) | ⏳ chờ chốt cấu hình | |
+| Crypto | Prereg crypto (5 mã, dev 2022–2024, holdout 2025-01→2026-10) | ✅ commit fecda10 | [prereg-crypto.md](prereg-crypto.md) |
+| Crypto | Dữ liệu + backtest theo asset + baseline/ablation dev + FINAL | ✅ commit c6d5902 | [ket-qua/crypto-ablation-dev.md](ket-qua/crypto-ablation-dev.md) |
+| Crypto | LiveBot crypto (SL/TP tự quản), web Stock/Crypto, tester crypto | ⏳ agent j-cx-live | |
+| Crypto | HOLDOUT crypto (1 lần, cấu hình FINAL đã khoá ở c6d5902) | ⏳ chờ user cho phép | |
 | — | Alpaca MCP | ❌ bỏ (theo quyết định 2026-11-23) | |
 
 ## Nhật ký thay đổi
@@ -259,3 +263,29 @@ Chạy: `uv run python -m paper_bot.web` → http://127.0.0.1:8600 (chỉ localh
   - Job bot gốc (3 mã, 2019–2024): 0,8 giây, 100 lệnh, PF 2,21, Sharpe 0,57.
   - Ngày holdout → 400; POST đặt lệnh thiếu xác nhận → 403.
 - Tổng: **498 test pass**. Chưa thử bằng mắt trên trình duyệt; nút đặt lệnh thật chưa bấm.
+
+### 2026-11-26 — Chế độ CRYPTO: lõi + đánh giá trên dev (agent j-cx-core)
+- `--asset crypto` gồm BTC, ETH, SOL, AVAX, LINK (cặp /USD).
+  - Phí 25 bps mỗi chiều, năm hoá theo 365 ngày, cho mua lẻ.
+  - Regime theo BTC; giới hạn tương quan 0,9.
+  - Walk-forward train mở rộng, 6 cửa sổ 2022–2024; chặn holdout.
+  - Phần cổ phiếu không đổi (bot gốc Sharpe 0,65, kiểm tra lại).
+- **Baseline dev 2022–2024:**
+
+  | | Sharpe | CAGR | MaxDD |
+  |---|---|---|---|
+  | C0 mua giữ BTC | 0,68 | 25,0% | −67,1% |
+  | C1 chia đều 5 mã | 0,51 | 12,1% | −80,4% |
+  | C2 bot gốc | 0,54 | 2,4% | −3,2% |
+
+- **Ablation dev** (FULL Sharpe 0,24). Bỏ từng thành phần thì Sharpe đổi như sau:
+  - Bỏ bracket/stop: **+0,66**.
+  - Bỏ forecast: **+0,16**.
+  - Bỏ regime: −0,62 → regime có giá trị.
+  - Bỏ hiệu chỉnh xác suất: −0,11 → có giá trị.
+  - Bỏ sizing ATR: −0,14 → có giá trị.
+  - Bỏ giới hạn tương quan: 0 → giới hạn này không bao giờ kích hoạt.
+- **FINAL theo luật định trước** = FULL bỏ bracket và forecast. Chạy 1 lần trên dev: **Sharpe 0,92, CAGR 23,6%, MaxDD −18,1%**.
+  - Đây chỉ là kết quả dev, chưa phải kết luận: thành phần bị bỏ được chọn ngay trên dev nên có nguy cơ overfit. Holdout mới là phép thử thật.
+- Hạn chế: chỉ 5 mã, tương quan cao, 6 cửa sổ nên rất nhiễu; SOL thiếu 418 ngày, AVAX chỉ có từ 2021-11; chưa mô phỏng spread.
+- Sửa lỗi: dự báo NaN với crypto. Lần ablation đầu bị crash vì lỗi này nên không cho ra kết quả; kết quả trên lấy từ lần chạy sau khi sửa.
