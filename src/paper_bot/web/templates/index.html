@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Paper trading - biểu đồ</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header id="toolbar">
+    <div class="group">
+      <input id="symbol-input" list="symbols-list" value="AAPL" maxlength="6" autocomplete="off"
+             spellcheck="false" placeholder="Mã" title="Gõ mã rồi Enter">
+      <datalist id="symbols-list"></datalist>
+    </div>
+    <div class="group" id="tf-buttons">
+      <button data-tf="1m">1m</button><button data-tf="5m">5m</button><button data-tf="15m">15m</button>
+      <button data-tf="1h">1h</button><button data-tf="1D" class="active">1D</button>
+    </div>
+    <div class="group toggles">
+      <label class="ma10"><input type="checkbox" id="chk-ma10" checked> MA10</label>
+      <label class="ma30"><input type="checkbox" id="chk-ma30" checked> MA30</label>
+      <label class="ma200"><input type="checkbox" id="chk-ma200" checked> MA200</label>
+      <label><input type="checkbox" id="chk-rsi" checked> RSI</label>
+      <label><input type="checkbox" id="chk-vol" checked> Volume</label>
+    </div>
+    <div class="group">
+      <label>Bot <select id="run-select"><option value="">(không hiện)</option></select></label>
+    </div>
+    <div class="group right">
+      <span id="load-status" class="muted"></span>
+      <span id="live-status" class="badge warn">Realtime: chưa kết nối</span>
+    </div>
+  </header>
+
+  <main>
+    <section id="chart-wrap">
+      <div id="legend"></div>
+      <div id="chart"></div>
+      <div id="tooltip" hidden></div>
+    </section>
+
+    <aside id="side">
+      <section class="card">
+        <h3>Tài khoản (paper)</h3>
+        <div id="account" class="muted">Đang tải…</div>
+      </section>
+      <section class="card">
+        <h3>Vị thế</h3>
+        <div id="positions" class="muted">Đang tải…</div>
+      </section>
+      <section class="card">
+        <h3>Lệnh chờ</h3>
+        <div id="orders" class="muted">Đang tải…</div>
+      </section>
+      <section class="card">
+        <h3>Đặt lệnh thủ công (paper)</h3>
+        <form id="order-form" autocomplete="off">
+          <div class="form-grid">
+            <label>Mã <input id="ord-symbol" maxlength="5" spellcheck="false" required></label>
+            <label>Hướng <select id="ord-side"><option value="buy">Mua</option><option value="sell">Bán</option></select></label>
+            <label>Loại <select id="ord-type"><option value="market">Market</option><option value="limit">Limit</option></select></label>
+            <label>Số lượng <input id="ord-qty" type="number" min="1" max="10000" step="1" value="1" required></label>
+            <label>Giá limit <input id="ord-limit" type="number" min="0" step="0.01"></label>
+            <label>Stop loss <input id="ord-sl" type="number" min="0" step="0.01" placeholder="tuỳ chọn"></label>
+            <label>Take profit <input id="ord-tp" type="number" min="0" step="0.01" placeholder="tuỳ chọn"></label>
+          </div>
+          <button type="submit" id="ord-submit" class="primary">Đặt lệnh…</button>
+          <div id="ord-msg" class="small muted"></div>
+        </form>
+      </section>
+      <section class="card">
+        <h3>Bot</h3>
+        <label class="small muted">Mã (cách nhau bằng dấu cách)
+          <input id="bot-symbols" value="AAPL NVDA JPM" spellcheck="false" style="width:100%"></label>
+        <div class="bot-buttons">
+          <button id="bot-dry" class="primary">Chạy bot 1 vòng (dry-run)</button>
+          <button id="bot-real" class="danger">Chạy THẬT…</button>
+        </div>
+        <pre id="bot-output" hidden></pre>
+      </section>
+      <div class="muted small" id="refresh-note">Tự làm mới mỗi 15 giây</div>
+    </aside>
+  </main>
+
+  <div id="modal" class="modal" hidden>
+    <div class="modal-box">
+      <h3 id="modal-title"></h3>
+      <div id="modal-body"></div>
+      <p class="small">Gõ đúng <b>XAC NHAN</b> để tiếp tục:</p>
+      <input id="modal-input" autocomplete="off" spellcheck="false" placeholder="XAC NHAN">
+      <div class="modal-actions">
+        <button id="modal-cancel">Huỷ bỏ</button>
+        <button id="modal-ok" class="primary" disabled>Gửi</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/vendor/lightweight-charts.standalone.production.js"></script>
+  <script src="/static/js/api.js"></script>
+  <script src="/static/js/chart.js"></script>
+  <script src="/static/js/legend.js"></script>
+  <script src="/static/js/data.js"></script>
+  <script src="/static/js/live.js"></script>
+  <script src="/static/js/panel.js"></script>
+  <script src="/static/js/modal.js"></script>
+  <script src="/static/js/orders.js"></script>
+  <script src="/static/js/botrun.js"></script>
+  <script src="/static/js/main.js"></script>
+</body>
+</html>
