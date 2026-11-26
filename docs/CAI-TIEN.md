@@ -38,6 +38,7 @@ P1 Tiên (DataManager) --MarketState--> P2 Lanh (Strategy) --Signal--> P3 Mfan (
 | P4 | Dashboard Streamlit (5 trang) + ghi kết quả backtest vào DB | ✅ | `dashboard.py`, `backtest/report.py` |
 | P4 | Tăng tốc B2 (70–260 giây → 8–10 giây, kết quả giống hệt) | ✅ | `backtest/baselines.py` |
 | — | Ghép tất cả vào `TradingBot` (giữ lệnh `once/loop/report` cũ, thêm `--engine full\|legacy`, `--dry-run`, `--disable`) | ✅ (chưa có tín hiệu thật nào để thử đặt lệnh) | `live.py`, `bot.py`, [cai-tien/TICH-HOP.md](cai-tien/TICH-HOP.md) |
+| — | UI Streamlit 4 trang (Pipeline, Đánh giá, Giám sát, Điều khiển) | ✅ | `ui/`, [cai-tien/UI.md](cai-tien/UI.md) |
 | — | Chạy HOLDOUT 2025-01 → 2026-10 (1 lần) | ⏳ chờ chốt cấu hình | |
 | — | Alpaca MCP | ❌ bỏ (theo quyết định 2026-11-23) | |
 
@@ -207,3 +208,25 @@ Chạy 47 phút. Chưa phải kết quả chính thức: holdout chưa chạy.
 - **Chạy thật dry-run** (2026-11-25, AAPL/MSFT/NVDA): fit bộ hiệu chỉnh, tải Chronos, dùng nến tới 2026-11-24. Không mã nào có tín hiệu nên 0 lệnh. DB ghi equity và sự kiện đúng.
 - Luồng 13 bước của engine full: [quy-trinh.md](quy-trinh.md), phần A.
 - Tổng: **219 test pass** (Jarvis tự chạy lại).
+
+### 2026-11-26 — UI Streamlit (agent j-ui, j-ui2)
+Chạy: `uv run streamlit run src/paper_bot/ui/app.py`
+- **Trang chủ:** sơ đồ luồng P1 → P2 → P3 → DB → P4.
+- **Pipeline:**
+  - Chọn mã, ngày, bật/tắt 6 thành phần, vốn và vị thế giả định.
+  - P1: biểu đồ giá kèm MA, regime, dải dự báo, chỉ báo, tin tức.
+  - P2: bảng tín hiệu kèm lý do, xác suất, veto.
+  - P3: lệnh mô phỏng (số cổ, SL/TP, % vốn, tương quan).
+  - Có chế độ quét N phiên.
+- **Đánh giá:** equity và drawdown các lần backtest; bảng ablation, calibration, forecast. Có cảnh báo "holdout chưa chạy".
+- **Giám sát:** tài khoản Alpaca (chỉ đọc), kill switch, equity, tín hiệu, lệnh, fill, sự kiện trong DB.
+- **Điều khiển:**
+  - Chạy thử (dry-run).
+  - **Chạy thật:** chỉ mở khi tick xác nhận **và** gõ đúng `XAC NHAN`. Sự kiện `ui_real_run` được ghi vào DB trước khi chạy.
+  - Gỡ kill switch, cũng phải xác nhận.
+  - Không có nút `loop`.
+- **An toàn:**
+  - Lệnh dạng list, `shell=False`. Mã chỉ nhận chữ A–Z; tên thành phần theo danh sách cho phép.
+  - Chốt chặn cuối ngay trước subprocess.
+  - Có test cho 7 cách xác nhận sai và các input độc (`AAPL;`, `$(rm)`...).
+- Tổng: **307 test pass** (Jarvis tự chạy lại). Server đã trả HTTP 200 cho cả 5 trang. Nút chạy thật chưa được bấm thử.

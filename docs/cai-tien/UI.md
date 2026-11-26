@@ -49,3 +49,46 @@ Smoke test đọc cache thật AAPL/NVDA/JPM quét 120 phiên tới 2024-06-28: 
   Smoke test thủ công trên cache thật (calibrator giả): không exception.
 - **Hạn chế:** calibrator thật lần đầu có thể fit tới 5 phút (có spinner) và ghi `data/models/calibrator.pkl`.
   Test chưa kiểm tra nội dung biểu đồ altair, chỉ kiểm tra không lỗi.
+
+## Bước 3 — 2026-11-26: trang Đánh giá + trang Giám sát
+
+**File tạo:** `ui/pages/2_Danh_gia.py`, `ui/pages/3_Giam_sat.py`. **File sửa:** `ui/core.py`, `tests/test_ui_core.py`, `tests/test_ui_pages.py`.
+Không sửa `dashboard.py` (chỉ import lại `connect_readonly`, `list_runs`, `load_table`, `load_equity_many`, `summary_table`, `RESULTS_DIR`).
+
+- `core.py` thêm (đều chỉ ĐỌC): `open_db` (DB mở `mode=ro`), `db_runs`, `backtest_runs`, `db_table`, `equity_curves`,
+  `run_summary`, `filter_events`, `read_live_state` + `kill_switch_text` (đọc `data/live_state.json` qua `live.load_state`),
+  `read_result_doc` (chặn `../`, chỉ `*.md`), `markdown_tables` (tách bảng markdown thành DataFrame, cột toàn số thì đổi sang số),
+  `ablation_table`, `fetch_account` (TradingClient paper, lỗi/thiếu key -> thông báo), `account_snapshot(client)` (chỉ gọi
+  get_account / get_all_positions / get_orders).
+- Trang Đánh giá: hộp cảnh báo giai đoạn phát triển/holdout chưa chạy; 4 tab: Equity & drawdown (chọn nhiều run bt-*, mặc định
+  FULL/B0/B1/B2), Ablation, Calibration, Forecast (bảng đọc từ docs/ket-qua/*.md, kèm nguyên văn trong expander).
+- Trang Giám sát: chọn run_id (mặc định run nào đã có dữ liệu trong DB), kill switch, tài khoản Alpaca (cache 30s + nút Làm mới),
+  equity theo thời gian, tab signals/orders/fills/events (events lọc theo level/kind). Không có nút nào gửi lệnh.
+- **Test:** `test_ui_core.py` 47 passed (thêm 9: DB tạm bằng Store, live_state tạm, bảng markdown, client giả có `submit_order` nổ nếu bị gọi);
+  `test_ui_pages.py` 18 passed (thêm 8 AppTest trang 2–3: có/không DB, bỏ chọn run, lọc event, thiếu key, live-paper rỗng, kill switch ngắt).
+  Toàn bộ `pytest tests` (trừ 2 file UI) vẫn 219 passed. Smoke test trên DB + docs thật: không exception.
+- **Hạn chế:** cột có `%` trong bảng markdown giữ dạng chữ (không vẽ biểu đồ từ đó). Chưa chạy `ruff` (chưa cài trong venv).
+  Trang Giám sát không tự refresh; nhấn "Làm mới". (Nhãn tiếng Việt cho run bt-abl-* đã làm ở bước 4.)
+
+## Bước 4 — 2026-11-26: trang Điều khiển + chốt chặn an toàn + README
+
+**File tạo:** `ui/pages/4_Dieu_khien.py`. **File sửa:** `ui/core.py`, `ui/pages/2_Danh_gia.py` (nhãn run), `tests/test_ui_core.py`,
+`tests/test_ui_pages.py`, `README.md` (mục "Giao diện" + cấu trúc thư mục), file nhật ký này.
+
+- `core.py` thêm: `run_command(cmd, allow_real=False, timeout=600)` là CHỐT CHẶN cuối trước `subprocess.run` (list args, `shell=False`):
+  lệnh phải bắt đầu bằng `uv run paper-bot`, subcommand chỉ `once`/`report` (loop bị chặn); lệnh `once` không `--dry-run`
+  (`is_real_order_command`) chỉ chạy khi `allow_real is True` (chuỗi/số truthy cũng bị từ chối). Timeout -> trả `timed_out=True`.
+  `log_ui_event` (ghi event WARNING vào DB), `real_run_id`, `run_label` + `RUN_LABELS` (nhãn tiếng Việt cho `bt-*`, giá trị chọn vẫn là run_id).
+- Trang Điều khiển: form (mã từ danh sách + ô "mã khác" qua whitelist, engine, `--disable`, `--llm`, interval), 4 khối:
+  1) dry-run (hiện câu lệnh, nút chạy, stdout/stderr sau khi xong); 2) chạy THẬT: nút `disabled` cho tới khi tick + gõ đúng `XAC NHAN`
+  (không strip, phân biệt hoa/thường); khi bấm, ghi event `ui_real_run` (run_id live-paper, kèm câu lệnh) TRƯỚC khi chạy;
+  3) gỡ kill switch (chọn run, cũng cần tick + `XAC NHAN`, lệnh `report --reset-kill-switch [--dry-run]`);
+  4) loop: chỉ hiện câu lệnh để chép vào terminal, không có nút. Tham số sai -> báo lỗi và dừng, không có nút nào.
+- Phòng thủ nhiều lớp: (a) nút disabled; (b) `build_once_command` ném PermissionError nếu thiếu xác nhận; (c) `run_command` chặn lại lần nữa.
+- **Test:** `test_ui_core.py` 60 passed, `test_ui_pages.py` 28 passed (thêm 10 AppTest trang 4 + nhãn run). Mọi test dùng `subprocess.run` giả
+  (ghi lại lệnh), `log_ui_event` bị chặn mặc định (không ghi DB thật), `TradingClient.__init__` nổ nếu bị gọi. Kiểm tra: mở trang không chạy gì;
+  dry-run đúng lệnh; 7 tổ hợp thiếu/sai xác nhận (kể cả thừa/thiếu khoảng trắng, sai hoa/thường) đều không chạy; đủ xác nhận thì
+  chạy đúng 1 lệnh không `--dry-run` và event ghi trước khi chạy; input lạ (`aapl`, `AAPL;`, `$(rm)`, `../x`, mã quá dài, không chọn mã) bị chặn;
+  legacy bỏ `--disable`; lỗi/timeout hiện thông báo; gỡ kill switch cần xác nhận; `loop`, lệnh lạ, `once` có phần tử không phải chuỗi bị `run_command` từ chối.
+- **Hạn chế:** AppTest không bấm được nút disabled nên lớp (b)/(c) được kiểm tra ở test core chứ không qua bấm nút trên trang.
+  stdout/stderr hiện sau khi lệnh xong (không stream). Chưa chạy `ruff` (chưa cài). Chưa chạy Streamlit server thật; chưa bấm bot thật.

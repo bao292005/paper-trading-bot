@@ -6,11 +6,14 @@ Chống rò rỉ: mọi hàm cắt nến <= asof. Xem MarketState của ngày b�
 (calibrator) chỉ dùng dữ liệu tới 2024-12-31 (xem get_calibrator).
 """
 
+import json
 import logging
 import re
 import shlex
+import subprocess
 from dataclasses import dataclass
 from datetime import timedelta
+from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
@@ -434,3 +437,230 @@ def loop_command_text(symbols, engine: str = "full", disable=(), llm: bool = Fal
     cmd = [c for c in cmd if c != "--dry-run"]
     cmd += ["--interval", str(validate_interval(interval))] + (["--dry-run"] if dry_run else [])
     return shlex.join(cmd)
+
+
+# ---------------------------- Chạy lệnh (chốt chặn an toàn) ----------------------------
+
+RUN_TIMEOUT = 600  # giây
+ALLOWED_SUBCOMMANDS = ("once", "report")  # UI không bao giờ chạy "loop"
+
+
+def run_command(cmd: List[str], allow_real: bool = False, timeout: int = RUN_TIMEOUT) -> dict:
+    """Chạy lệnh paper-bot bằng subprocess (list args, KHÔNG shell). Đây là CHỐT CHẶN cuối cùng:
+    - lệnh phải bắt đầu bằng `uv run paper-bot` và là once/report (loop bị chặn);
+    - lệnh `once` không có --dry-run (gửi lệnh paper thật) chỉ chạy khi allow_real=True.
+    Trả {returncode, stdout, stderr, timed_out}."""
+    if (not isinstance(cmd, list) or not all(isinstance(c, str) for c in cmd)
+            or cmd[:3] != BASE_CMD or len(cmd) < 4 or cmd[3] not in ALLOWED_SUBCOMMANDS):
+        raise PermissionError(f"lệnh không nằm trong danh sách cho phép: {cmd!r}")
+    if is_real_order_command(cmd) and allow_real is not True:
+        raise PermissionError("lệnh THẬT (không --dry-run) chưa được xác nhận, không chạy")
+    try:
+        done = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, cwd=_PROJECT_ROOT, shell=False)
+    except subprocess.TimeoutExpired as e:
+        def _txt(x):
+            return x.decode("utf-8", "replace") if isinstance(x, bytes) else (x or "")
+
+        return {"returncode": None, "stdout": _txt(e.stdout), "stderr": _txt(e.stderr), "timed_out": True}
+    return {"returncode": done.returncode, "stdout": done.stdout, "stderr": done.stderr, "timed_out": False}
+
+
+def log_ui_event(run_id: str, kind: str, message: str, db_path=None) -> None:
+    """Ghi một event vào DB (dùng khi UI gửi lệnh thật / gỡ kill switch), để lần sau xem lại ai đã bấm."""
+    from ..storage import Store
+
+    Store(path=db_path or _PROJECT_ROOT / "data" / "trading.db", run_id=run_id).log_event(
+        kind, message, level="WARNING")
+
+
+def real_run_id(dry_run: bool) -> str:
+    return "live-dry" if dry_run else "live-paper"
+
+
+RUN_LABELS = {
+    "bt-abl-FULL": "FULL (bản đầy đủ, ablation)",
+    "bt-abl-no-forecast": "FULL bỏ forecast",
+    "bt-abl-no-regime": "FULL bỏ regime switching",
+    "bt-abl-no-calibration": "FULL bỏ hiệu chỉnh xác suất",
+    "bt-abl-no-atr-sizing": "FULL bỏ sizing ATR",
+    "bt-abl-no-bracket": "FULL bỏ bracket/stop",
+    "bt-abl-no-corr-limit": "FULL bỏ giới hạn tương quan",
+    "bt-abl-B0": "B0 (mua giữ SPY, ablation)",
+    "bt-abl-B1": "B1 (chia đều 50 mã, ablation)",
+    "bt-abl-B2": "B2 (bot gốc, ablation)",
+    "bt-B0": "B0 (mua giữ SPY)",
+    "bt-B1": "B1 (chia đều 50 mã)",
+    "bt-B2": "B2 (bot gốc)",
+    "bt-B2-20bps": "B2 phí 20 bps",
+    "bt-B2-5bps": "B2 phí 5 bps",
+}
+
+
+def run_label(run_id: str) -> str:
+    """Nhãn tiếng Việt cho run_id (không biết thì giữ nguyên id). Giá trị chọn vẫn là run_id."""
+    return f"{RUN_LABELS[run_id]}  [{run_id}]" if run_id in RUN_LABELS else run_id
+
+
+# ---------------------------- Đánh giá + giám sát: đọc DB / file (CHỈ ĐỌC) ----------------------------
+# Tái dùng hàm load của dashboard.py (P4); dashboard chỉ import streamlit bên trong main() nên import được.
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[3]  # thư mục gốc project (chứa data/, pyproject.toml)
+LIVE_RUNS = ("live-paper", "live-dry")  # = live.RUN_ID_PAPER, live.RUN_ID_DRY
+LIVE_STATE_FILE = "live_state.json"
+
+
+def open_db(path=None):
+    """Mở DB chỉ đọc (None nếu chưa có file)."""
+    from .. import dashboard
+
+    return dashboard.connect_readonly(path or dashboard.DB_PATH)
+
+
+def db_runs(conn) -> List[str]:
+    from .. import dashboard
+
+    return dashboard.list_runs(conn)
+
+
+def backtest_runs(runs: Iterable[str]) -> List[str]:
+    """Các run backtest (bt-...); ablation cũng bắt đầu bằng bt-."""
+    return [r for r in runs if r.startswith("bt-")]
+
+
+def db_table(conn, table: str, run_id: str, limit: int = 5000) -> pd.DataFrame:
+    from .. import dashboard
+
+    return dashboard.load_table(conn, table, run_id, limit)
+
+
+def equity_curves(conn, run_ids: List[str]) -> Dict[str, pd.DataFrame]:
+    """Equity + drawdown từng run (run không có equity bị bỏ)."""
+    from .. import dashboard
+
+    return {r: c for r, c in dashboard.load_equity_many(conn, run_ids).items() if not c.empty}
+
+
+def run_summary(conn, run_ids: List[str]) -> pd.DataFrame:
+    from .. import dashboard
+
+    return dashboard.summary_table(conn, run_ids)
+
+
+def filter_events(df: pd.DataFrame, levels=(), kinds=()) -> pd.DataFrame:
+    """Lọc bảng events theo level / kind (rỗng = không lọc)."""
+    if df.empty:
+        return df
+    if levels:
+        df = df[df["level"].isin(levels)]
+    if kinds:
+        df = df[df["kind"].isin(kinds)]
+    return df
+
+
+def read_live_state(run_id: str, path=None) -> dict:
+    """Trạng thái kill switch của run_id đọc từ data/live_state.json. Chưa có file/run -> {}.
+    File hỏng thì ném ValueError có thông báo rõ."""
+    from ..live import STATE_PATH, load_state
+
+    try:
+        return load_state(path or STATE_PATH, run_id)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"live_state.json hỏng: {e}") from e
+
+
+def kill_switch_text(state: dict) -> Tuple[bool, str]:
+    """(đang ngắt?, câu mô tả) từ state của read_live_state."""
+    if not state:
+        return False, "Chưa có trạng thái (bot chưa chạy vòng nào cho run này)."
+    halted = bool(state.get("halted", False))
+    head = "ĐANG NGẮT - bot chặn lệnh MUA" if halted else "Bình thường (không ngắt)"
+    peak, start = state.get("peak_equity"), state.get("day_start_equity")
+    extra = []
+    if state.get("day"):
+        extra.append(f"ngày {state['day']}")
+    if start is not None:
+        extra.append(f"equity đầu ngày {start:,.0f}$")
+    if peak is not None:
+        extra.append(f"đỉnh {peak:,.0f}$")
+    return halted, head + (" | " + ", ".join(extra) if extra else "")
+
+
+def read_result_doc(name: str, results_dir=None) -> str:
+    """Nội dung docs/ket-qua/<name> (chỉ tên file thường, không cho '../'). Thiếu file -> chuỗi rỗng."""
+    from .. import dashboard
+
+    if name != Path(name).name or not name.endswith(".md"):
+        raise ValueError(f"tên file không hợp lệ: {name!r}")
+    p = Path(results_dir or dashboard.RESULTS_DIR) / name
+    return p.read_text(encoding="utf-8") if p.exists() else ""
+
+
+def _num(cell: str):
+    """'0.12' -> 0.12; chữ (kể cả '-16.3%') giữ nguyên để không mất đơn vị."""
+    try:
+        return float(cell.strip())
+    except ValueError:
+        return cell
+
+
+def markdown_tables(text: str) -> List[Tuple[str, pd.DataFrame]]:
+    """Tách các bảng markdown (| a | b |) thành [(tiêu đề '##' gần nhất, DataFrame)].
+    Cột nào toàn số thì đổi sang số, còn lại giữ chữ."""
+    out, heading, block = [], "", []
+
+    def flush():
+        if len(block) >= 3:  # tiêu đề + dòng phân cách + >= 1 dòng dữ liệu
+            cells = [[c.strip() for c in ln.strip().strip("|").split("|")] for ln in block]
+            cols, rows = cells[0], [r for r in cells[2:] if len(r) == len(cells[0])]
+            if rows:
+                out.append((heading, pd.DataFrame(rows, columns=cols).apply(
+                    lambda col: col.map(_num) if all(isinstance(_num(x), float) for x in col) else col)))
+        block.clear()
+
+    for line in text.splitlines():
+        if line.lstrip().startswith("|"):
+            block.append(line)
+            continue
+        flush()
+        if line.startswith("#"):
+            heading = line.lstrip("#").strip()
+    flush()
+    return out
+
+
+def ablation_table(results_dir=None) -> pd.DataFrame:
+    """Bảng metric của ablation-dev.md (bảng đầu tiên); thiếu file -> bảng rỗng."""
+    tables = markdown_tables(read_result_doc("ablation-dev.md", results_dir))
+    return tables[0][1].set_index("cấu hình") if tables else pd.DataFrame()
+
+
+def fetch_account() -> Tuple[Optional[dict], Optional[str]]:
+    """(ảnh chụp tài khoản paper, lỗi). CHỈ ĐỌC. Thiếu key / mất mạng -> (None, thông báo)."""
+    try:
+        from alpaca.trading.client import TradingClient
+
+        from ..config import TradingConfig
+
+        cfg = TradingConfig.from_env()  # thiếu key thì raise SystemExit
+        return account_snapshot(TradingClient(cfg.api_key, cfg.api_secret, paper=True)), None
+    except BaseException as e:
+        return None, f"Không lấy được tài khoản Alpaca: {e}"
+
+
+def account_snapshot(client) -> dict:
+    """Ảnh chụp tài khoản Alpaca CHỈ ĐỌC (client là TradingClient hoặc đối tượng giả có get_account,
+    get_all_positions, get_orders). Trả equity, cash, positions (DataFrame), orders (DataFrame)."""
+    acc = client.get_account()
+    pos = pd.DataFrame([{"symbol": p.symbol, "qty": float(p.qty), "giá vốn": float(p.avg_entry_price),
+                         "giá trị": float(p.market_value), "lãi/lỗ": float(p.unrealized_pl)}
+                        for p in client.get_all_positions()],
+                       columns=["symbol", "qty", "giá vốn", "giá trị", "lãi/lỗ"])
+    from alpaca.trading.enums import QueryOrderStatus
+    from alpaca.trading.requests import GetOrdersRequest
+
+    orders = pd.DataFrame([{"symbol": o.symbol, "side": str(getattr(o.side, "value", o.side)),
+                            "qty": o.qty, "type": str(getattr(o.order_type, "value", o.order_type)),
+                            "status": str(getattr(o.status, "value", o.status)), "id": str(o.id)}
+                           for o in client.get_orders(filter=GetOrdersRequest(status=QueryOrderStatus.OPEN))],
+                          columns=["symbol", "side", "qty", "type", "status", "id"])
+    return {"equity": float(acc.equity), "cash": float(acc.cash), "positions": pos, "orders": orders}

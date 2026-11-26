@@ -310,3 +310,221 @@ def test_plan_khong_doi_muc_log():
     before, handlers = logger.level, list(logger.handlers)
     plan(sig(veto=True, why="x"))
     assert logger.level == before and logger.handlers == handlers
+
+
+# ---------------------------- Đánh giá + giám sát (đọc DB / file) ----------------------------
+
+@pytest.fixture
+def db(tmp_path):
+    """DB tạm có run bt-x (2 điểm equity) và live-dry (events, signal)."""
+    from paper_bot.storage import Store
+
+    s = Store(path=tmp_path / "t.db", run_id="bt-x")
+    s.log_equity(datetime(2024, 1, 1), 100.0, 100.0, 0.0)
+    s.log_equity(datetime(2024, 1, 2), 90.0, 50.0, 40.0)
+    d = Store(path=tmp_path / "t.db", run_id="live-dry")
+    d.log_event("kill_switch", "ngắt", level="WARNING")
+    d.log_event("reconcile", "ok")
+    d.log_signal(sig(), regime="bull_calm")
+    return tmp_path / "t.db"
+
+
+def test_open_db_thieu_file_va_chi_doc(tmp_path, db):
+    assert core.open_db(tmp_path / "khong_co.db") is None
+    conn = core.open_db(db)
+    assert core.db_runs(conn) == ["bt-x", "live-dry"] and core.backtest_runs(core.db_runs(conn)) == ["bt-x"]
+    with pytest.raises(Exception):  # mở ro nên ghi sẽ lỗi
+        conn.execute("DELETE FROM equity")
+
+
+def test_equity_va_summary(db):
+    conn = core.open_db(db)
+    curves = core.equity_curves(conn, ["bt-x", "live-dry"])  # live-dry không có equity -> bị bỏ
+    assert list(curves) == ["bt-x"] and curves["bt-x"]["drawdown"].iloc[-1] == pytest.approx(-0.1)
+    assert core.run_summary(conn, ["bt-x"]).loc["bt-x", "total_return"] == pytest.approx(-0.1)
+    assert core.db_table(conn, "signals", "live-dry")["symbol"].tolist() == ["AAA"]
+    with pytest.raises(ValueError):
+        core.db_table(conn, "sqlite_master", "x")
+
+
+def test_filter_events(db):
+    evt = core.db_table(core.open_db(db), "events", "live-dry")
+    assert len(core.filter_events(evt)) == 2
+    assert core.filter_events(evt, levels=["WARNING"])["kind"].tolist() == ["kill_switch"]
+    assert core.filter_events(evt, kinds=["reconcile"])["level"].tolist() == ["INFO"]
+    assert core.filter_events(evt, levels=["ERROR"]).empty
+    assert core.filter_events(evt.iloc[0:0], levels=["INFO"]).empty
+
+
+def test_live_state_va_kill_switch_text(tmp_path):
+    path = tmp_path / "live_state.json"
+    assert core.read_live_state("live-dry", path) == {}
+    assert core.kill_switch_text({})[0] is False
+    path.write_text('{"live-dry": {"halted": true, "day": "2026-11-25", "peak_equity": 1000}}')
+    halted, text = core.kill_switch_text(core.read_live_state("live-dry", path))
+    assert halted is True and "NGẮT" in text and "2026-11-25" in text
+    assert core.read_live_state("live-paper", path) == {}  # run khác -> rỗng
+    path.write_text("{hỏng")
+    with pytest.raises(ValueError, match="hỏng"):
+        core.read_live_state("live-dry", path)
+
+
+MD = """# Tiêu đề
+## Bảng một
+| cấu hình | sharpe | cagr | kết luận |
+|---|---|---|---|
+| FULL | 0.12 | 0.6% |  |
+| B0 | 0.92 | 17.1% | ok |
+
+Chữ ở giữa.
+
+## Bảng hai
+| a | b |
+|---|---|
+| 1 | x |
+"""
+
+
+def test_markdown_tables():
+    (h1, t1), (h2, t2) = core.markdown_tables(MD)
+    assert h1 == "Bảng một" and h2 == "Bảng hai"
+    assert list(t1.columns) == ["cấu hình", "sharpe", "cagr", "kết luận"]
+    assert t1["sharpe"].tolist() == [0.12, 0.92] and t1["cagr"].tolist() == ["0.6%", "17.1%"]
+    assert t2["a"].tolist() == [1.0] and t2["b"].tolist() == ["x"]
+    assert core.markdown_tables("không có bảng nào") == []
+    assert core.markdown_tables("| a |\n|---|\n") == []  # thiếu dòng dữ liệu
+
+
+def test_doc_va_ablation(tmp_path):
+    (tmp_path / "ablation-dev.md").write_text(MD, encoding="utf-8")
+    assert core.ablation_table(tmp_path).loc["FULL", "sharpe"] == 0.12
+    assert core.ablation_table(tmp_path / "khong_co").empty
+    assert core.read_result_doc("nope.md", tmp_path) == ""
+    for bad in ["../x.md", "a/b.md", "x.txt"]:
+        with pytest.raises(ValueError):
+            core.read_result_doc(bad, tmp_path)
+
+
+def test_doc_that_cua_du_an():
+    t = core.ablation_table()
+    if not t.empty:  # file thật có thể bị ghi đè nhưng phải còn dòng FULL
+        assert "FULL" in t.index and "sharpe" in t.columns
+
+
+class _Obj:
+    def __init__(self, **kw):
+        self.__dict__.update(kw)
+
+
+class FakeClient:
+    """Client giả: chỉ có hàm ĐỌC. Có ai gọi submit_order là lỗi."""
+    calls = []
+
+    def get_account(self):
+        self.calls.append("account")
+        return _Obj(equity="100500.5", cash="90000")
+
+    def get_all_positions(self):
+        return [_Obj(symbol="AAPL", qty="3", avg_entry_price="190", market_value="600", unrealized_pl="30")]
+
+    def get_orders(self, filter=None):
+        return [_Obj(symbol="NVDA", side="buy", qty="2", order_type="market", status="new", id="abc")]
+
+    def submit_order(self, *a, **k):
+        raise AssertionError("giám sát không được đặt lệnh")
+
+
+def test_account_snapshot():
+    s = core.account_snapshot(FakeClient())
+    assert s["equity"] == 100500.5 and s["cash"] == 90000.0
+    assert s["positions"].loc[0, "symbol"] == "AAPL" and s["positions"].loc[0, "lãi/lỗ"] == 30.0
+    assert s["orders"].loc[0, "symbol"] == "NVDA" and s["orders"].loc[0, "status"] == "new"
+
+
+def test_fetch_account_loi_thi_tra_thong_bao(monkeypatch):
+    def thieu_key(*a, **k):
+        raise SystemExit("thiếu key")
+
+    monkeypatch.setattr("paper_bot.config.TradingConfig.from_env", thieu_key)
+    snap, err = core.fetch_account()
+    assert snap is None and "thiếu key" in err
+
+
+# ---------------------------- chạy lệnh: chốt chặn ----------------------------
+
+@pytest.fixture
+def fake_run(monkeypatch):
+    """Thay subprocess.run bằng bản ghi lại (KHÔNG chạy gì thật)."""
+    import subprocess
+
+    calls = []
+
+    def run(cmd, **kw):
+        calls.append((cmd, kw))
+        return subprocess.CompletedProcess(cmd, 0, "xong", "log")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    return calls
+
+
+DRY = core.build_once_command(["AAPL"], dry_run=True)
+REAL = core.BASE_CMD + ["once", "--symbols", "AAPL", "--engine", "full"]  # không --dry-run
+
+
+def test_run_command_dry_chay_duoc(fake_run):
+    res = core.run_command(DRY)
+    cmd, kw = fake_run[0]
+    assert cmd == DRY and isinstance(cmd, list) and kw["shell"] is False and kw["timeout"] == 600
+    assert res == {"returncode": 0, "stdout": "xong", "stderr": "log", "timed_out": False}
+
+
+def test_run_command_that_can_allow_real_dung_true(fake_run):
+    assert core.is_real_order_command(REAL)
+    for bad in (False, "yes", 1, None):
+        with pytest.raises(PermissionError):
+            core.run_command(REAL, allow_real=bad)
+    assert fake_run == []  # chưa lần nào chạm subprocess
+    core.run_command(REAL, allow_real=True)
+    assert len(fake_run) == 1
+
+
+@pytest.mark.parametrize("bad", [
+    "uv run paper-bot once --dry-run",  # chuỗi, không phải list
+    ["rm", "-rf", "/"],
+    ["uv", "run", "paper-bot"],
+    core.BASE_CMD + ["loop", "--dry-run"],  # UI không chạy loop
+    core.BASE_CMD + ["loop"],
+    ["uv", "run", "python", "-c", "x", "once"],
+    core.BASE_CMD + ["once", 5],
+    [],
+])
+def test_run_command_chan_lenh_la(fake_run, bad):
+    with pytest.raises(PermissionError):
+        core.run_command(bad, allow_real=True)
+    assert fake_run == []
+
+
+def test_run_command_reset_kill_switch_la_report(fake_run):
+    cmd = core.build_reset_kill_switch_command(True, True, core.CONFIRM_WORD)
+    core.run_command(cmd)
+    assert fake_run[0][0] == core.BASE_CMD + ["report", "--reset-kill-switch", "--dry-run"]
+
+
+def test_run_command_timeout(monkeypatch):
+    import subprocess
+
+    def run(cmd, **kw):
+        raise subprocess.TimeoutExpired(cmd, 600, output=b"mot phan", stderr=None)
+
+    monkeypatch.setattr(subprocess, "run", run)
+    res = core.run_command(DRY)
+    assert res["timed_out"] is True and res["returncode"] is None and res["stdout"] == "mot phan" and res["stderr"] == ""
+
+
+def test_log_ui_event_va_nhan_run(tmp_path):
+    core.log_ui_event("live-paper", "ui_real_run", "thử", db_path=tmp_path / "e.db")
+    evt = core.db_table(core.open_db(tmp_path / "e.db"), "events", "live-paper")
+    assert evt["kind"].tolist() == ["ui_real_run"] and evt["level"].tolist() == ["WARNING"]
+    assert core.real_run_id(False) == "live-paper" and core.real_run_id(True) == "live-dry"
+    assert "bỏ forecast" in core.run_label("bt-abl-no-forecast") and "[bt-abl-no-forecast]" in core.run_label("bt-abl-no-forecast")
+    assert core.run_label("bt-lạ") == "bt-lạ"

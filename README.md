@@ -50,6 +50,19 @@ Chi tiết luồng: [docs/quy-trinh.md](docs/quy-trinh.md).
   Chỉ gỡ ngắt bằng `--reset-kill-switch` sau khi đã xem lại.
 - `--dry-run` không gửi hay huỷ lệnh nào. Lệnh dự kiến được ghi vào DB với `run_id="live-dry"`, `status="dry_run"`.
 
+## Giao diện (UI Streamlit)
+```bash
+uv run streamlit run src/paper_bot/ui/app.py
+```
+Giao diện tiếng Việt, nhiều trang (mỗi trang có dòng "Trang này cho biết gì"):
+- **Trang chủ**: sơ đồ luồng P1→P2→P3→DB→P4.
+- **1. Pipeline**: chọn mã + ngày, xem P1 (nến, MA, regime, fan chart forecast, features, tin), P2 (mọi tín hiệu, veto, Signal cuối), P3 (lệnh dự kiến, MÔ PHỎNG), hoặc quét N phiên. Bật/tắt 6 thành phần như `--disable`.
+- **2. Đánh giá**: equity/drawdown các run `bt-*`, bảng ablation, calibration, forecast (đọc `docs/ket-qua/`). Chỉ là giai đoạn phát triển, holdout chưa chạy.
+- **3. Giám sát**: tài khoản Alpaca paper (chỉ đọc), signals/orders/fills/events trong DB, trạng thái kill switch.
+- **4. Điều khiển**: chạy thử `once --dry-run`; chạy THẬT `once` chỉ khi tick đồng ý **và** gõ đúng `XAC NHAN` (ghi event `ui_real_run` vào DB); gỡ kill switch cũng cần xác nhận. Không có nút loop (loop chạy ở terminal, UI chỉ hiện câu lệnh để chép).
+
+An toàn: lệnh được ghép từ lựa chọn có whitelist (mã chữ HOA A-Z, cờ `--disable` theo danh sách), chạy bằng `subprocess` dạng list (không shell), timeout 10 phút; hàm chạy lệnh tự chặn lệnh thật nếu chưa xác nhận. Test (`tests/test_ui_*.py`) chạy offline, subprocess và TradingClient đều bị giả.
+
 ## Cấu trúc
 ```
 src/paper_bot/
@@ -60,5 +73,6 @@ src/paper_bot/
   managers.py     DataManager, PortfolioManager, OrderManager (engine legacy)
   bot.py          TradingBot: engine legacy (bot gốc)
   data/ decision/ risk.py execution.py storage.py backtest/   các thành phần của engine full
+  ui/             giao diện Streamlit: app.py, pages/, core.py (hàm thuần, test được), charts.py
 docs/quy-trinh.md Quy trình từ input đến output
 ```
