@@ -49,6 +49,26 @@ def fetch_daily_bars(
     return result
 
 
+def fetch_crypto_daily_bars(client, symbols: List[str], start: datetime,
+                            end: datetime) -> Dict[str, pd.DataFrame]:
+    """Nến ngày crypto (CryptoHistoricalDataClient, không cần key). Ngày = ngày UTC (nến chốt 00:00 UTC).
+
+    Trả {symbol: df chuẩn hoá}; mã không có dữ liệu -> df rỗng. Lỗi API thì để nổi lên.
+    """
+    from alpaca.data.requests import CryptoBarsRequest
+
+    request = CryptoBarsRequest(symbol_or_symbols=symbols, timeframe=TimeFrame.Day,
+                                start=start, end=end)
+    df = client.get_crypto_bars(request).df
+    result = {}
+    for sym in symbols:
+        if df.empty or sym not in df.index.get_level_values("symbol"):
+            result[sym] = normalize_bars(None)
+        else:
+            result[sym] = normalize_bars(df.xs(sym, level="symbol")[COLUMNS], tz="UTC")
+    return result
+
+
 class AlpacaDataManager(DataManager):
     """Kế thừa DataManager của bài gốc: giữ nguyên get_historical_data(symbol, days),
     thêm get_bars(symbol, start, end) đọc cache trước, thiếu mới gọi API."""
