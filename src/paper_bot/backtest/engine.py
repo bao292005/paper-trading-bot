@@ -6,12 +6,15 @@ Quy tắc (docs/prereg-danh-gia.md, mục 2-3):
   - Không margin, không bán khống: mua vượt tiền mặt thì giảm qty.
 """
 
+import logging
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional
 
 import pandas as pd
 
 from ..contracts import Fill, OrderIntent
+
+logger = logging.getLogger("paper_bot")
 
 
 class View:
@@ -73,13 +76,41 @@ class BacktestResult:
     equity: pd.DataFrame  # index ngày, cột equity, cash, exposure
     trades: List[Trade]
     fills: List[Fill]
+    # Thống kê ngày "mơ hồ" (SL và TP cùng nằm trong biên độ ngày), xem fill_model
+    fill_stats: dict = field(default_factory=dict)
+
+
+FILL_MODELS = ("daily_ohlc", "minute")
+
+
+def default_minute_loader(symbol: str, day: pd.Timestamp) -> pd.DataFrame:
+    """Nến 1 phút phiên chính của `symbol` trong ngày `day` (data.intraday, có cache theo tháng)."""
+    from ..data.intraday import load_intraday
+    return load_intraday(symbol, "1m", day, day)
+
+
+def first_hit_in_minutes(minutes: pd.DataFrame, sl: float, tp: float):
+    """Duyệt nến phút theo thời gian: mức nào chạm trước? -> (lý do, giá khớp) hoặc None.
+    Cùng một phút chạm cả hai -> vẫn giả định SL trước (bi quan, như prereg)."""
+    for mo, mh, ml in minutes[["open", "high", "low"]].itertuples(index=False):
+        if ml <= sl:
+            return "stop_loss", min(float(mo), sl)
+        if mh >= tp:
+            return "take_profit", max(float(mo), tp)
+    return None
 
 
 Policy = Callable[[pd.Timestamp, View, Portfolio], List[OrderIntent]]
 
 
 class _Engine:
-    def __init__(self, bars, cost_bps, initial_cash, store):
+    def __init__(self, bars, cost_bps, initial_cash, store, fill_model="daily_ohlc",
+                 minute_loader=None):
+        self.fill_model = fill_model
+        self.minute_loader = minute_loader or default_minute_loader
+        # ambiguous: số ngày mơ hồ; minute_sl/minute_tp: phân xử được bằng nến phút;
+        # fallback: thiếu/không khớp dữ liệu phút -> giả định SL trước như daily_ohlc
+        self.fill_stats = {"ambiguous": 0, "minute_sl": 0, "minute_tp": 0, "fallback": 0}
         self.bars = bars
         self.cost = cost_bps / 10_000
         self.pf = Portfolio(cash=initial_cash, equity=initial_cash)
@@ -152,7 +183,8 @@ class _Engine:
         """Kiểm tra stop-loss / take-profit trong ngày bằng high/low.
 
         - Chỉ từ ngày SAU ngày vào lệnh.
-        - Cả SL và TP cùng chạm trong ngày -> giả định SL chạm trước (bi quan, theo prereg).
+        - Cả SL và TP cùng chạm trong ngày -> giả định SL chạm trước (bi quan, theo prereg);
+          fill_model="minute": xem nến phút của ngày đó để biết mức nào chạm trước.
         - Giá mở cửa đã vượt mức (gap) -> khớp ở giá open.
         """
         for sym in list(self.pf.positions):
@@ -162,10 +194,33 @@ class _Engine:
                 continue
             o, h, low = (float(df.at[day, c]) for c in ("open", "high", "low"))
             sl, tp = pos.stop_loss, pos.take_profit
+            if sl is not None and tp is not None and sl < o < tp and low <= sl and h >= tp:
+                self.fill_stats["ambiguous"] += 1
+                if self.fill_model == "minute":
+                    hit = self._resolve_by_minutes(sym, day, sl, tp)
+                    if hit is not None:
+                        self.sell(sym, 0, hit[1], day, hit[0])
+                        continue
             if sl is not None and low <= sl:
                 self.sell(sym, 0, min(o, sl), day, "stop_loss")
             elif tp is not None and h >= tp:
                 self.sell(sym, 0, max(o, tp), day, "take_profit")
+
+    def _resolve_by_minutes(self, sym, day, sl, tp):
+        """Chỉ gọi cho ngày mơ hồ -> chỉ tải nến phút khi thật sự cần (lazy)."""
+        try:
+            minutes = self.minute_loader(sym, day)
+        except Exception as e:  # thiếu key / lỗi mạng -> dùng giả định bi quan
+            logger.warning(f"{sym} {day.date()}: không tải được nến phút ({e}) -> giả định SL trước")
+            minutes = None
+        hit = None
+        if minutes is not None and len(minutes):
+            hit = first_hit_in_minutes(minutes, sl, tp)
+        if hit is None:
+            self.fill_stats["fallback"] += 1
+        else:
+            self.fill_stats["minute_sl" if hit[0] == "stop_loss" else "minute_tp"] += 1
+        return hit
 
     def mark_to_market(self, day) -> dict:
         for sym, df in self.bars.items():
@@ -179,8 +234,13 @@ class _Engine:
 
 def run_backtest(bars: Dict[str, pd.DataFrame], start, end, policy: Policy,
                  initial_cash: float = 100_000.0, cost_bps: float = 10.0,
-                 store=None) -> BacktestResult:
+                 store=None, fill_model: str = "daily_ohlc",
+                 minute_loader=None) -> BacktestResult:
     """Chạy backtest từ `start` tới `end` (gồm cả 2 đầu).
+
+    fill_model: "daily_ohlc" (mặc định, như cũ) | "minute" (ngày SL & TP cùng trong biên độ thì
+      xem nến phút cái nào chạm trước). minute_loader(symbol, day) -> DataFrame nến phút; None ->
+      data.intraday.load_intraday. Chỉ gọi cho ngày mơ hồ, và cấm ngày >= 2025-01-01 (HOLDOUT).
 
     bars: dict symbol -> DataFrame nến (định dạng cache chung). Dữ liệu trước `start`
     vẫn được policy thấy qua View (để tính chỉ báo), nhưng không giao dịch.
@@ -190,7 +250,11 @@ def run_backtest(bars: Dict[str, pd.DataFrame], start, end, policy: Policy,
     all_days = sorted(set().union(*(df.index for df in bars.values())))
     days = [d for d in all_days if start <= d <= end]
 
-    eng = _Engine(bars, cost_bps, initial_cash, store)
+    if fill_model not in FILL_MODELS:
+        raise ValueError(f"fill_model phải thuộc {FILL_MODELS}, nhận {fill_model!r}")
+    if fill_model == "minute" and end >= pd.Timestamp("2025-01-01"):
+        raise ValueError("fill_model='minute' không được tải nến phút của HOLDOUT (>= 2025-01-01)")
+    eng = _Engine(bars, cost_bps, initial_cash, store, fill_model, minute_loader)
     rows, pending = [], []
     for day in days:
         eng.execute_pending(pending, day)
@@ -210,4 +274,5 @@ def run_backtest(bars: Dict[str, pd.DataFrame], start, end, policy: Policy,
         px = eng.last_close[sym]
         trades.append(Trade(sym, t.qty, t.entry_date, t.entry_price, days[-1], px, "end",
                             t.fee + t.qty * px * eng.cost))
-    return BacktestResult(equity=equity, trades=trades, fills=eng.fills)
+    return BacktestResult(equity=equity, trades=trades, fills=eng.fills,
+                          fill_stats={"fill_model": fill_model, **eng.fill_stats})

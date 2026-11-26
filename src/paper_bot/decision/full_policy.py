@@ -44,16 +44,48 @@ def _upto(df: pd.DataFrame, asof) -> pd.DataFrame:
     return df.iloc[:df.index.searchsorted(pd.Timestamp(asof), side="right")]
 
 
-def _base_strategies():
-    return [MovingAverageCrossoverStrategy(), RSIStrategy()]
+# Tham số chiến lược có thể chỉnh (Strategy Tester); mặc định = bài gốc MA 10/30, RSI 14 (30/70)
+DEFAULT_STRATEGY_PARAMS = {"ma_short": 10, "ma_long": 30, "rsi_period": 14,
+                           "rsi_oversold": 30, "rsi_overbought": 70}
+
+
+def _check_strategy_params(params: Optional[dict]) -> Optional[dict]:
+    """None -> None (hành vi cũ). Có -> dict đầy đủ (điền mặc định), báo lỗi khoá lạ/sai."""
+    if params is None:
+        return None
+    unknown = set(params) - set(DEFAULT_STRATEGY_PARAMS)
+    if unknown:
+        raise ValueError(f"strategy_params lạ: {sorted(unknown)}")
+    p = {**DEFAULT_STRATEGY_PARAMS, **params}
+    if not 0 < p["ma_short"] < p["ma_long"] < FEATURE_WINDOW:
+        raise ValueError(f"cần 0 < ma_short < ma_long < {FEATURE_WINDOW}, nhận {p}")
+    return p
+
+
+def _base_strategies(params: Optional[dict] = None):
+    p = params or DEFAULT_STRATEGY_PARAMS
+    return [MovingAverageCrossoverStrategy(int(p["ma_short"]), int(p["ma_long"])),
+            RSIStrategy(int(p["rsi_period"]), p["rsi_oversold"], p["rsi_overbought"])]
+
+
+def _regime_strategy(params: Optional[dict]):
+    """Như RegimeSwitchStrategy() mặc định, nhưng MA/RSI dùng tham số `params`."""
+    if params is None:
+        return RegimeSwitchStrategy()
+    ma, rsi = _base_strategies(params)
+    return RegimeSwitchStrategy({"bull_calm": [ma], "bull_volatile": [ma], "bear_calm": [rsi],
+                                 "bear_volatile": [ma, rsi], "unknown": [ma, rsi]})
 
 
 def make_full_policy_factory(flags: Optional[dict] = None, risk_cfg: Optional[RiskConfig] = None,
                              forecasts: Optional[pd.DataFrame] = None,
                              spy_bars: Optional[pd.DataFrame] = None, symbols=None,
                              min_score: float = 0.5, calib_method: str = "isotonic",
-                             calib_cache: Optional[dict] = None):
-    """spy_bars: SPY để tính regime (None -> lấy từ view nếu có, không thì đọc cache tới 2024-12-31).
+                             calib_cache: Optional[dict] = None,
+                             strategy_params: Optional[dict] = None):
+    """strategy_params: tuỳ chọn, chỉnh MA/RSI (khoá trong DEFAULT_STRATEGY_PARAMS). None = như cũ.
+      Áp cho cả chiến lược giao dịch lẫn bảng tín hiệu fit calibrator.
+    spy_bars: SPY để tính regime (None -> lấy từ view nếu có, không thì đọc cache tới 2024-12-31).
     symbols: mã được giao dịch (None -> mọi mã trong view trừ SPY).
     min_score: ngưỡng score CHỈ cho lệnh VÀO (BUY). SELL khi đang nắm luôn được thực hiện
       (thoát vị thế là giảm rủi ro - quyết định của Jarvis, phương án (a)).
@@ -64,6 +96,7 @@ def make_full_policy_factory(flags: Optional[dict] = None, risk_cfg: Optional[Ri
         raise ValueError(f"flag lạ: {sorted(unknown)}")
     f = {**DEFAULT_FLAGS, **(flags or {})}
     cfg = risk_cfg or RiskConfig()
+    sp = _check_strategy_params(strategy_params)
 
     fc_table = None
     if f["use_forecast"]:
@@ -86,11 +119,13 @@ def make_full_policy_factory(flags: Optional[dict] = None, risk_cfg: Optional[Ri
         use_fc_feat = fc_table is not None
         if f["use_calibration"] and train_end is not None:
             key = (train_end, use_fc_feat, calib_method)
+            if sp is not None:  # tham số khác -> tín hiệu khác -> calibrator khác
+                key += (tuple(sorted(sp.items())),)
             if calib_cache is not None and key in calib_cache:
                 calibrator = calib_cache[key]
             else:
                 calibrator = _fit_on_train(train_bars, spy_upto(train_end), fc_table, use_fc_feat,
-                                           calib_method)
+                                           calib_method, sp)
                 if calib_cache is not None:
                     calib_cache[key] = calibrator
         if fc_table is not None and train_end is not None:
@@ -98,7 +133,7 @@ def make_full_policy_factory(flags: Optional[dict] = None, risk_cfg: Optional[Ri
             part = fc_table[dates <= train_end]  # chỉ forecast của giai đoạn train
             if len(part):
                 ref_width = float((part["q90"] - part["q10"]).median())
-        strategies = [RegimeSwitchStrategy()] if f["use_regime"] else _base_strategies()
+        strategies = [_regime_strategy(sp)] if f["use_regime"] else _base_strategies(sp)
         # Ngưỡng của pipeline = 0 (áp cho cả 2 hướng); ngưỡng thật chỉ áp cho BUY trong policy
         pipe = DecisionPipeline(strategies, calibrator=calibrator, min_score=0.0)
         return _make_policy(pipe, f, cfg, fc_table, ref_width, spy_upto, symbols, min_score)
@@ -106,10 +141,10 @@ def make_full_policy_factory(flags: Optional[dict] = None, risk_cfg: Optional[Ri
     return policy_factory
 
 
-def _fit_on_train(train_bars, spy, fc_table, use_fc_feat, method):
+def _fit_on_train(train_bars, spy, fc_table, use_fc_feat, method, params=None):
     """Bảng tín hiệu MA/RSI dựng CHỈ từ train_bars (nhãn t+5 cũng nằm trong train) -> calibrator."""
     regimes = regime_series(spy) if len(spy) else pd.Series(dtype=object)
-    strategies = [wrap_legacy(s) for s in _base_strategies()]
+    strategies = [wrap_legacy(s) for s in _base_strategies(params)]
     rows = []
     for sym, bars in train_bars.items():
         if sym == BENCHMARK or len(bars) == 0:
