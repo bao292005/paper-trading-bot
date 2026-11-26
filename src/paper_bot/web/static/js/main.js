@@ -48,11 +48,10 @@ async function loadSymbols() {
   } catch (e) { /* gợi ý mã là phụ, bỏ qua lỗi */ }
 }
 
-// Đổi Stock <-> Crypto: mỗi loại có danh sách mã riêng, múi giờ hiển thị riêng, form lệnh/bot riêng
+// Đổi Stock <-> Crypto: mỗi loại có danh sách mã riêng, form lệnh/bot riêng (múi giờ hiển thị giữ theo #tz-select)
 function changeAsset(asset, wantedSymbol) {
   CH.asset = asset;
   document.getElementById("asset-select").value = asset;
-  setChartTz(asset);
   const sym = normalizeSymbol(wantedSymbol, asset) || (asset === "crypto" ? CRYPTO_SYMBOLS[0] : "AAPL");
   CH.symbol = sym;
   document.getElementById("symbol-input").value = sym;
@@ -77,6 +76,11 @@ function bindToolbar() {
   document.getElementById("chk-vol").addEventListener("change", (ev) => setSeriesVisible(CH.volume, ev.target.checked));
   document.getElementById("chk-rsi").addEventListener("change", (ev) => setRsiVisible(ev.target.checked, D.ind.rsi14));
   document.getElementById("run-select").addEventListener("change", (ev) => { D.runId = ev.target.value; loadMarkers(); });
+  // Ô chọn múi giờ hiển thị (mặc định giờ VN, nhớ trong localStorage)
+  const tzSel = document.getElementById("tz-select");
+  tzSel.innerHTML = Object.entries(TZ_CHOICES).map(([v, t]) => `<option value="${esc(v)}">${esc(t)}</option>`).join("");
+  tzSel.value = CH.tz;
+  tzSel.addEventListener("change", (ev) => { setChartTz(ev.target.value); refreshLegend(); });
 }
 
 window.addEventListener("DOMContentLoaded", () => {

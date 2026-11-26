@@ -6,16 +6,31 @@ const CH = {
   lines: [], markerByTime: new Map(), symbol: "AAPL", tf: "1D", asset: "stock",
 };
 
+// Múi giờ HIỂN THỊ (chỉ đổi nhãn trục/crosshair, không đổi dữ liệu). Người dùng chọn ở ô #tz-select.
+const TZ_CHOICES = { "Asia/Ho_Chi_Minh": "Giờ VN (UTC+7)", "UTC": "UTC", "America/New_York": "New York" };
+const TZ_KEY = "ptb.chartTz";
+const TZ_DEFAULT = "Asia/Ho_Chi_Minh";
 let _fmtClock, _fmtDay;
-// Cổ phiếu hiển thị giờ New York, crypto hiển thị UTC (nến ngày crypto cắt ở 00:00 UTC)
-function setChartTz(asset) {
-  const tz = asset === "crypto" ? "UTC" : NY_TZ;
+CH.tz = TZ_DEFAULT;
+
+function savedTz() {
+  try { const t = localStorage.getItem(TZ_KEY); if (t in TZ_CHOICES) return t; } catch (e) { /* localStorage bị chặn */ }
+  return TZ_DEFAULT;
+}
+
+// Đặt múi giờ hiển thị; nhận tên múi giờ trong TZ_CHOICES (giá trị lạ -> mặc định giờ VN)
+function setChartTz(tz) {
+  if (!(tz in TZ_CHOICES)) tz = TZ_DEFAULT;
+  CH.tz = tz;
   _fmtClock = new Intl.DateTimeFormat("en-GB", { timeZone: tz, hour: "2-digit", minute: "2-digit", hour12: false });
   _fmtDay = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" });
+  try { localStorage.setItem(TZ_KEY, tz); } catch (e) { /* bỏ qua */ }
+  // Ép biểu đồ vẽ lại nhãn thời gian theo múi giờ mới
+  if (CH.chart) CH.chart.applyOptions({ localization: { timeFormatter: nyLabel }, timeScale: { tickMarkFormatter: tickFormatter } });
 }
-setChartTz("stock");
+setChartTz(savedTz());
 
-// `time` từ server là unix giây UTC; hiển thị theo giờ New York (crypto: UTC)
+// `time` từ server là unix giây UTC; hiển thị theo múi giờ đang chọn (CH.tz). Tên hàm giữ "ny" cho tương thích.
 function nyClock(sec) { return _fmtClock.format(new Date(sec * 1000)); }
 function nyDay(sec) { return _fmtDay.format(new Date(sec * 1000)); }
 function nyLabel(sec) { return CH.tf === "1D" ? nyDay(sec) : nyDay(sec) + " " + nyClock(sec); }
