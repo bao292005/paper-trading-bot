@@ -37,7 +37,13 @@ function initChart(container) {
     grid: { vertLines: { color: "#1e222d" }, horzLines: { color: "#1e222d" } },
     crosshair: { mode: LW.CrosshairMode.Normal },
     rightPriceScale: { borderColor: "#2a2e39" },
-    timeScale: { borderColor: "#2a2e39", timeVisible: true, secondsVisible: false, tickMarkFormatter: tickFormatter },
+    // Zoom: cuộn chuột neo theo vị trí con trỏ, kéo trục giá/thời gian để co giãn, không quán tính khi kéo bằng chuột
+    handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: true },
+    handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: { time: true, price: true },
+                   axisDoubleClickReset: { time: true, price: true } },
+    kineticScroll: { mouse: false, touch: true },
+    timeScale: { borderColor: "#2a2e39", timeVisible: true, secondsVisible: false, tickMarkFormatter: tickFormatter,
+                 shiftVisibleRangeOnNewBar: true, rightOffset: ZM.PAD },  // đang ở mép phải thì theo nến mới; xem quá khứ thì giữ nguyên
     localization: { timeFormatter: nyLabel },
   });
   CH.candles = CH.chart.addSeries(LW.CandlestickSeries, {

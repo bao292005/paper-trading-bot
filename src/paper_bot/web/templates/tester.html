@@ -82,6 +82,16 @@
         <div id="v-info" class="small muted vis-info">Chạy một kết quả (Start) rồi chọn mã để phát lại từng nến ngày.</div>
         <div class="vis-wrap">
           <div id="v-chart"></div>
+          <div id="vz-bar" class="zoombar" title="Shift + kéo để phóng vùng">
+            <span class="zhint">Shift + kéo để phóng vùng</span>
+            <select id="vz-mode" data-z="mode" title="Trục giá: Thường / Log (phím L) / %"><option value="normal">Thường</option><option value="log">Log</option><option value="percent">%</option></select>
+            <button id="vz-auto" data-z="auto" class="active" title="Tự co giãn trục giá (phím A)">Auto</button>
+            <button id="vz-out" data-z="out" title="Thu nhỏ (phím -)">&minus;</button>
+            <button id="vz-in" data-z="in" title="Phóng to (phím + hoặc =)">+</button>
+            <button id="vz-reset" data-z="reset" title="Về ~150 nến gần nhất + auto giá (phím 0)">&#10226;</button>
+            <button id="vz-latest" data-z="latest" title="Về hiện tại (phím End)">&rarr;|</button>
+            <button id="vz-fit" data-z="fit" title="Hiện toàn bộ dữ liệu (phím Home = nến đầu)">&#10530;</button>
+          </div>
           <div id="v-eq"></div>
           <div id="v-min" class="card" hidden>
             <div class="vis-bar"><b id="vm-title"></b>
@@ -120,6 +130,10 @@
 
   <script src="/static/vendor/lightweight-charts.standalone.production.js"></script>
   <script src="/static/js/api.js"></script>
+  <script src="/static/js/zoom_math.js"></script>
+  <script src="/static/js/pricescale.js"></script>
+  <script src="/static/js/zoombox.js"></script>
+  <script src="/static/js/zoom.js"></script>
   <script src="/static/js/tester_form.js"></script>
   <script src="/static/js/tester_job.js"></script>
   <script src="/static/js/tester_report.js"></script>

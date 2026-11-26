@@ -8,6 +8,7 @@ function initVisual() {
   VC.candles = VC.chart.addSeries(LW.CandlestickSeries, {
     upColor: "#26a69a", downColor: "#ef5350", borderVisible: false, wickUpColor: "#26a69a", wickDownColor: "#ef5350" });
   VC.markers = LW.createSeriesMarkers(VC.candles, []);
+  VC.zoom = attachZoom(VC.chart, VC.candles, $("v-chart"), { bar: $("vz-bar") });  // nút zoom, phím tắt, Shift+kéo
   VC.eqChart = LW.createChart($("v-eq"), { ...chartTheme(), timeScale: { borderColor: "#2a2e39", timeVisible: false } });
   VC.eq = VC.eqChart.addSeries(LW.LineSeries, { color: "#26a69a", lineWidth: 2, priceLineVisible: false, title: "Equity" });
 }

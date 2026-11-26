@@ -44,7 +44,7 @@ P1 Tiên (DataManager) --MarketState--> P2 Lanh (Strategy) --Signal--> P3 Mfan (
 | — | Chạy HOLDOUT 2025-01 → 2026-10 (1 lần) | ⏳ chờ chốt cấu hình | |
 | Crypto | Prereg crypto (5 mã, dev 2022–2024, holdout 2025-01→2026-10) | ✅ commit fecda10 | [prereg-crypto.md](prereg-crypto.md) |
 | Crypto | Dữ liệu + backtest theo asset + baseline/ablation dev + FINAL | ✅ commit c6d5902 | [ket-qua/crypto-ablation-dev.md](ket-qua/crypto-ablation-dev.md) |
-| Crypto | LiveBot crypto (SL/TP tự quản), web Stock/Crypto, tester crypto | ⏳ agent j-cx-live | |
+| Crypto | LiveBot crypto (SL/TP tự quản), web Stock/Crypto, tester crypto | ✅ commit 4198d35 | [cai-tien/CRYPTO-LIVE.md](cai-tien/CRYPTO-LIVE.md) |
 | Crypto | HOLDOUT crypto (1 lần, cấu hình FINAL đã khoá ở c6d5902) | ⏳ chờ user cho phép | |
 | — | Alpaca MCP | ❌ bỏ (theo quyết định 2026-11-23) | |
 

@@ -42,6 +42,16 @@
       <div id="legend"></div>
       <div id="chart"></div>
       <div id="tooltip" hidden></div>
+      <div id="zoombar" class="zoombar" title="Shift + kéo để phóng vùng">
+        <span class="zhint">Shift + kéo để phóng vùng</span>
+        <select id="z-mode" data-z="mode" title="Trục giá: Thường / Log (phím L) / %"><option value="normal">Thường</option><option value="log">Log</option><option value="percent">%</option></select>
+        <button id="z-auto" data-z="auto" class="active" title="Tự co giãn trục giá (phím A)">Auto</button>
+        <button id="z-out" data-z="out" title="Thu nhỏ (phím -)">&minus;</button>
+        <button id="z-in" data-z="in" title="Phóng to (phím + hoặc =)">+</button>
+        <button id="z-reset" data-z="reset" title="Về ~150 nến gần nhất + auto giá (phím 0)">&#10226;</button>
+        <button id="z-latest" data-z="latest" title="Về hiện tại (phím End)">&rarr;|</button>
+        <button id="z-fit" data-z="fit" title="Hiện toàn bộ dữ liệu đã tải">&#10530;</button>
+      </div>
     </section>
 
     <aside id="side">
@@ -104,7 +114,11 @@
 
   <script src="/static/vendor/lightweight-charts.standalone.production.js"></script>
   <script src="/static/js/api.js"></script>
+  <script src="/static/js/zoom_math.js"></script>
   <script src="/static/js/chart.js"></script>
+  <script src="/static/js/pricescale.js"></script>
+  <script src="/static/js/zoombox.js"></script>
+  <script src="/static/js/zoom.js"></script>
   <script src="/static/js/legend.js"></script>
   <script src="/static/js/data.js"></script>
   <script src="/static/js/live.js"></script>

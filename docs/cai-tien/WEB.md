@@ -1,5 +1,24 @@
 # Nhật ký web app (agent j-web)
 
+## Zoom biểu đồ (agent j-zoom, 2026-11-27)
+- File mới (`static/js/`, mỗi file ≤ 150 dòng): `zoom_math.js` (hàm thuần: zoom factor, cuộn, toạ độ chọn → range, giữ range khi prepend,
+  đổi khung theo thời gian), `pricescale.js` (Thường/Log/% + Auto + giá thủ công, nhớ chế độ ở localStorage `paperbot.priceMode`),
+  `zoombox.js` (Shift+kéo), `zoom.js` (`attachZoom(chart, series, el, {bar})` trả `reset/zoomIn/zoomOut/toLatest/fitAll/setMode/setAuto/saveRange/restoreRange`).
+- Gắn vào chart chính "/" (`#zoombar`, id `z-*`) và chart Visual của /tester (`#vz-bar`, id `vz-*`). Không đổi backend, không đổi `static/vendor`.
+- Nút (góc dưới phải chart, tooltip ghi phím): `−` (-) · `+` (+ hoặc =) · `⟲` reset ~150 nến cuối + auto giá (0) · `→|` về hiện tại (End) ·
+  `⤢` fit all · ô chọn trục giá Thường/Log/% (L bật/tắt Log) · nút Auto/Tay (A). Mỗi lần zoom 22%, quanh nến cuối nếu đang thấy, không thì quanh tâm.
+- Phím tắt (bỏ qua khi focus ở input/textarea/select, hoặc có Ctrl/Cmd/Alt): `+`/`=` vào, `-` ra, `←`/`→` cuộn 10% vùng nhìn, `Home` nến đầu đã tải,
+  `End` hiện tại, `0` reset, `L` Log, `A` Auto, `Esc` huỷ vùng đang chọn. Trên /tester chỉ hoạt động khi tab Visual đang hiện.
+- Box zoom: giữ **Shift + kéo chuột trái** → div mờ; thả chuột: thời gian bằng `coordinateToLogical`, giá bằng `coordinateToPrice` + `priceScale.setVisibleRange`
+  (tự tắt auto). Trong lúc kéo tắt `handleScroll/handleScale`; vùng < 5 px bị bỏ. Double-click trục giá hoặc ⟲ → về auto-scale.
+- Lần đầu / đổi mã: ~150 nến cuối (không còn `fitContent`). Đổi khung: `saveRange` (khoảng thời gian) → `restoreRange` sau khi nạp; nếu khung mới chưa phủ
+  tới thời điểm cũ hoặc có < 10 nến thì lùi về ~150 nến. Đang ở mép phải thì tiếp tục theo nến mới.
+- Realtime: `shiftVisibleRangeOnNewBar: true` — đang xem quá khứ thì chart KHÔNG tự cuộn; ở mép phải thì theo nến mới (`live.js` không đổi).
+- Lazy load: `loadOlder` vẫn cộng offset nhờ `ZM.shiftRange` (vùng nhìn không nhảy), có test.
+- Hạn chế: ở chế độ Log/% thư viện dùng đơn vị giá nội bộ nên Box zoom chỉ phóng theo thời gian (giá vẫn auto); chưa thử trên trình duyệt thật
+  (chỉ node + chart giả + TestClient); thanh zoom che một phần chart/RSI ở góc phải dưới (mờ 80%); trên /tester kéo thanh trượt phát lại vẫn đặt lại vùng ~120 nến.
+- Test: `tests/test_web_zoom.py` (12: hàm thuần, lazy load, đổi khung, attachZoom với chart giả), `tests/test_web_zoom_page.py` (id nút, thứ tự script, ≤ 150 dòng, `node --check`).
+
 ## Chế độ crypto cho web + /tester (agent j-cx-live, 2026-11-26)
 Chi tiết từng bước: [CRYPTO-LIVE.md](CRYPTO-LIVE.md). Cổ phiếu giữ nguyên hành vi (tin/phản hồi cổ phiếu không thêm khoá `asset`).
 - Trang `/`: ô chọn Stock/Crypto; `/api/symbols|bars|indicators|markers|positions|orders` nhận `asset`; crypto 24/7, giờ UTC;

@@ -19,9 +19,11 @@ function applyAll() {
   applyIndicators();
 }
 
-// Tải mới hoàn toàn khi đổi mã / khung
-async function loadAll() {
+// Tải mới hoàn toàn khi đổi mã / khung. keepRange = true (đổi khung): giữ cùng khoảng THỜI GIAN đang xem;
+// false (lần đầu / đổi mã): hiện ~150 nến gần nhất
+async function loadAll(keepRange) {
   const seq = ++D.seq;
+  if (keepRange && CH.zoom) CH.zoom.saveRange();
   D.bars = []; D.volume = []; D.ind = {}; D.oldest = null; D.exhausted = false;
   const params = { symbol: CH.symbol, tf: CH.tf, asset: CH.asset };
   setLoadStatus("Đang tải " + CH.symbol + "…");
@@ -30,7 +32,7 @@ async function loadAll() {
     if (seq !== D.seq) return;  // người dùng đã đổi mã/khung trong lúc chờ
     D.bars = b.bars; D.volume = b.volume; D.oldest = b.oldest; D.ind = ind;
     applyAll();
-    CH.chart.timeScale().fitContent();
+    if (CH.zoom) { if (keepRange) CH.zoom.restoreRange(D.bars); else CH.zoom.reset(); }
     setLoadStatus(b.bars.length ? "" : "Không có dữ liệu");
   } catch (e) {
     if (seq === D.seq) setLoadStatus(e.message, true);
@@ -56,8 +58,7 @@ async function loadOlder() {
     for (const k of IND_KEYS) D.ind[k] = (ind[k] || []).concat(D.ind[k] || []);
     applyAll();
     if (range) {  // setData làm lệch chỉ số logic: dịch lại đúng số nến vừa thêm
-      const n = b.bars.length;
-      CH.chart.timeScale().setVisibleLogicalRange({ from: range.from + n, to: range.to + n });
+      CH.chart.timeScale().setVisibleLogicalRange(ZM.shiftRange(range, b.bars.length));
     }
     setLoadStatus("");
   } catch (e) {

@@ -1,6 +1,6 @@
 // Khởi động trang "/": dựng biểu đồ, nối ô tìm mã, nút khung giờ, công tắc chỉ báo, chọn run.
-async function reload() {
-  await loadAll();
+async function reload(keepRange) {  // keepRange: đổi khung thì giữ khoảng thời gian đang xem
+  await loadAll(keepRange);
   refreshLegend();
   updatePriceLines();
 }
@@ -37,7 +37,7 @@ function selectTf(tf) {
   if (tf === CH.tf) return;
   CH.tf = tf;
   for (const b of document.querySelectorAll("#tf-buttons button")) b.classList.toggle("active", b.dataset.tf === tf);
-  reload();
+  reload(true);
   switchLive();
 }
 
@@ -82,6 +82,7 @@ function bindToolbar() {
 window.addEventListener("DOMContentLoaded", () => {
   CH.symbol = document.getElementById("symbol-input").value.trim().toUpperCase() || "AAPL";
   initChart(document.getElementById("chart"));
+  CH.zoom = attachZoom(CH.chart, CH.candles, document.getElementById("chart"), { bar: document.getElementById("zoombar") });
   setRsiVisible(document.getElementById("chk-rsi").checked);
   initLegend();
   watchOlderLoading();
