@@ -34,7 +34,8 @@ def test_trang_chu_nap_script_va_nut_long(tmp_path):
     for n in POS_JS:
         assert n in names and names.index(n) < names.index("main.js"), n
     assert 'id="pos-long-btn"' in html and 'id="pos-short-btn"' in html
-    assert re.search(r'id="pos-short-btn"[^>]*disabled', html)  # Short luôn tắt (không bán khống)
+    # Short bật sẵn (JS tự khoá khi chế độ thật + crypto)
+    assert not re.search(r'id="pos-short-btn"[^>]*disabled', html)
 
 
 @need_node

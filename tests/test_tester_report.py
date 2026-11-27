@@ -119,3 +119,18 @@ def test_matches_engine_when_all_closed():
     r = mt5_report(res, 10_000)
     assert r["final_balance"] == pytest.approx(res.equity["equity"].iloc[-1])
     assert r["total_fees"] == pytest.approx(sum(f.fee for f in res.fills))
+
+
+def test_tach_long_short_theo_side():
+    """Trade có side='short' (tài khoản luyện tập) được đếm riêng; trade không có side = long."""
+    from types import SimpleNamespace as NS
+
+    res = hand_result()
+    shorts = [NS(pnl=5.0, side="short", entry_date=D("2020-01-02"), exit_date=D("2020-01-03"), fee=0.0,
+                 exit_reason="take_profit", symbol="S"),
+              NS(pnl=-3.0, side="short", entry_date=D("2020-01-03"), exit_date=D("2020-01-06"), fee=0.0,
+                 exit_reason="stop_loss", symbol="S")]
+    r = mt5_report(NS(trades=res.trades + shorts, equity=res.equity), 1000)
+    assert r["total_trades"] == 7 and r["short_trades"] == 2 and r["long_trades"] == 5
+    assert r["short_won_pct"] == pytest.approx(0.5) and r["long_won_pct"] == pytest.approx(0.6)
+    assert mt5_report(hand_result(), 1000)["short_won_pct"] is None  # long-only: giữ như cũ

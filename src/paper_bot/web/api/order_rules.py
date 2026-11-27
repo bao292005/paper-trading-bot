@@ -108,35 +108,54 @@ def validate_crypto_web_order(body: Dict[str, Any], min_qty: float = 0.0) -> Dic
 
 
 POSITION_TYPES = ("market", "limit", "stop")
+CRYPTO_SHORT_MSG = "Alpaca không cho bán khống crypto"
 
 
-def validate_levels(body: Dict[str, Any], crypto: bool) -> Dict[str, float]:
-    """entry/sl/tp > 0 và CHỈ LONG: SL < entry < TP (sai -> 422). Cổ phiếu làm tròn 2 số lẻ trước khi so."""
+def position_side(body: Dict[str, Any], crypto: bool) -> str:
+    """Chiều của box: "long" (mặc định) | "short". Crypto thật không short được -> 422."""
+    side = body.get("side", "long")
+    if side not in ("long", "short"):
+        raise HTTPException(422, "side phải là long hoặc short")
+    if crypto and side == "short":
+        raise HTTPException(422, CRYPTO_SHORT_MSG)
+    return side
+
+
+def validate_levels(body: Dict[str, Any], crypto: bool, side: str = "long") -> Dict[str, float]:
+    """entry/sl/tp > 0; long: SL < entry < TP, short: TP < entry < SL (sai -> 422). Cổ phiếu làm tròn 2 số lẻ trước khi so."""
     get = _positive_float if crypto else _price
     lv = {k: get(body, k, required=True) for k in ("entry", "sl", "tp")}
-    if not lv["sl"] < lv["entry"] < lv["tp"]:
-        raise HTTPException(422, "chỉ long: cần SL < giá vào < TP")
+    if side == "short":
+        if not lv["tp"] < lv["entry"] < lv["sl"]:
+            raise HTTPException(422, "short: cần TP < giá vào < SL")
+    elif not lv["sl"] < lv["entry"] < lv["tp"]:
+        raise HTTPException(422, "long: cần SL < giá vào < TP")
     return lv
 
 
-def stop_limit_price(entry: float, tp: float) -> float:
-    """Giá limit cho lệnh vào stop_limit: entry + 0.5% (dễ khớp khi giá vọt), nhưng luôn < TP."""
+def stop_limit_price(entry: float, tp: float, side: str = "long") -> float:
+    """Giá limit cho lệnh vào stop_limit: long entry + 0.5% (dễ khớp khi giá vọt) nhưng < TP;
+    short (stop bán) entry − 0.5% nhưng > TP."""
+    if side == "short":
+        return round(min(entry, max(entry * 0.995, tp + 0.01)), 2)
     return round(max(entry, min(entry * 1.005, tp - 0.01)), 2)
 
 
 def validate_position(body: Dict[str, Any], min_qty: float = 0.0) -> Dict[str, Any]:
-    """Lệnh vào từ box Long Position: {asset, symbol, type, qty, entry, sl, tp}.
-    Cổ phiếu: qty nguyên 1..MAX_QTY, market/limit/stop (stop -> stop_limit trên sàn).
-    Crypto: chỉ market/limit, qty lẻ, luật chung execution.validate_crypto_order (SL/TP KHÔNG gắn vào lệnh)."""
+    """Lệnh vào từ box Long/Short Position: {asset, symbol, side (long|short, mặc định long), type, qty, entry, sl, tp}.
+    Cổ phiếu: qty nguyên 1..MAX_QTY, market/limit/stop (stop -> stop_limit trên sàn); short = bracket BÁN.
+    Crypto: chỉ long, market/limit, qty lẻ, luật chung execution.validate_crypto_order (SL/TP KHÔNG gắn vào lệnh).
+    Trả thêm "position": long|short; "side" là chiều lệnh trên sàn (buy|sell)."""
     from ...execution import validate_crypto_order
 
     asset, otype = body.get("asset", "stock"), body.get("type")
     if asset not in ("stock", "crypto"):
         raise HTTPException(422, "asset phải là stock hoặc crypto")
+    crypto = asset == "crypto"
+    pside = position_side(body, crypto)
     if otype not in POSITION_TYPES:
         raise HTTPException(422, f"type phải là một trong {POSITION_TYPES}")
-    crypto = asset == "crypto"
-    lv = validate_levels(body, crypto)
+    lv = validate_levels(body, crypto, pside)
     sym, qty = body.get("symbol"), body.get("qty")
     if crypto:
         if otype == "stop":
@@ -152,7 +171,8 @@ def validate_position(body: Dict[str, Any], min_qty: float = 0.0) -> Dict[str, A
             raise HTTPException(422, "mã chỉ gồm chữ HOA A-Z, tối đa 5 ký tự")
         if isinstance(qty, bool) or not isinstance(qty, int) or not 1 <= qty <= MAX_QTY:
             raise HTTPException(422, f"qty phải là số nguyên 1..{MAX_QTY}")
-    return {"asset": asset, "symbol": sym, "side": "buy", "type": otype, "qty": qty, **lv}
+    return {"asset": asset, "symbol": sym, "side": "sell" if pside == "short" else "buy", "position": pside,
+            "type": otype, "qty": qty, **lv}
 
 
 def validate_order_id(order_id: str) -> str:

@@ -22,13 +22,31 @@ async function refreshPositions() {
   try {
     PANEL.positions = (await getJSON("/api/positions")).positions;
     const rows = PANEL.positions.map((p) =>
-      `<tr class="clickable" data-symbol="${esc(p.symbol)}"><td><b>${esc(p.symbol)}</b></td>` +
+      `<tr class="clickable" data-symbol="${esc(p.symbol)}"><td><b>${esc(p.symbol)}</b> ${sideTag(p.qty)}</td>` +
       `<td class="num">${fmt.qty(p.qty)}</td><td class="num">${fmt.num(p.avg_entry_price)}</td>` +
-      `<td class="num ${fmt.cls(p.unrealized_pl)}">${fmt.num(p.unrealized_pl)}</td></tr>`).join("");
+      `<td class="num ${fmt.cls(p.unrealized_pl)}">${fmt.num(p.unrealized_pl)}</td>` +
+      `<td><button class="mini" data-close="${esc(p.symbol)}" title="Đóng cả vị thế bằng lệnh market ngược chiều">Đóng</button></td></tr>`).join("");
     document.getElementById("positions").innerHTML = rows
-      ? `<table><tr><th>Mã</th><th class="num">Qty</th><th class="num">Giá vào</th><th class="num">P/L</th></tr>${rows}</table>`
+      ? `<table><tr><th>Mã</th><th class="num">Qty</th><th class="num">Giá vào</th><th class="num">P/L</th><th></th></tr>${rows}</table>`
       : "Không có vị thế";
   } catch (e) { PANEL.positions = []; showErr("positions", e); }
+}
+
+// Đóng cả vị thế: long -> BÁN market, short -> MUA market (cần XAC NHAN)
+async function closePosition(sym) {
+  const p = PANEL.positions.find((x) => x.symbol === sym);
+  if (!p) return;
+  const short = p.qty < 0;
+  const html = summaryTable([["Mã", sym], ["Vị thế", `${short ? "SHORT" : "LONG"} ${fmt.qty(p.qty)}`],
+    ["Lệnh", `${short ? "MUA" : "BÁN"} market ${fmt.qty(Math.abs(p.qty))}`]]) +
+    (short ? `<p class="err small">${esc(POS_SHORT_WARN)}</p>` : "");
+  const confirm = await askConfirm(`Đóng vị thế ${sym}`, html);
+  if (!confirm) return;
+  try {
+    const r = await sendJSON("POST", "/api/position/close", { symbol: sym, confirm });
+    ordMsg(`Đã gửi lệnh đóng ${sym}: ${r.side} ${fmt.qty(r.qty)} (${r.status || "?"})`, "ok");
+    refreshPanel();
+  } catch (e) { ordMsg("Lỗi đóng vị thế: " + e.message, "bad"); }
 }
 
 function orderPrice(o) { return o.limit_price !== null ? o.limit_price : o.stop_price; }
@@ -57,7 +75,7 @@ function updatePriceLines() {
   for (const o of PANEL.orders.filter((x) => x.symbol === CH.symbol)) {
     const price = orderPrice(o);
     if (price === null || price === undefined) continue;
-    const exit = pos && o.side === "sell";
+    const exit = pos && o.side === (pos.qty < 0 ? "buy" : "sell");  // lệnh đóng: long = bán, short = mua
     if (exit && o.stop_price !== null) items.push({ price, color: "#ef5350", title: "SL", dashed: true });
     else if (exit) items.push({ price, color: "#26a69a", title: "TP", dashed: true });
     else items.push({ price, color: "#ff9800", title: `Chờ ${o.side} ${o.type}`, dashed: true });
@@ -76,6 +94,8 @@ function initPanel() {
     document.getElementById(id).addEventListener("click", (ev) => {
       const btn = ev.target.closest("button[data-cancel]");
       if (btn) { cancelOrder(btn.dataset.cancel); return; }
+      const cl = ev.target.closest("button[data-close]");
+      if (cl) { closePosition(cl.dataset.close); return; }
       const tr = ev.target.closest("tr[data-symbol]");
       if (tr) selectSymbol(tr.dataset.symbol, CRYPTO_SYMBOLS.includes(tr.dataset.symbol) ? "crypto" : "stock");
     });

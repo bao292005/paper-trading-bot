@@ -23,10 +23,11 @@ function posFixType(t) { return t === "stop" && posReal() && CH.asset === "crypt
 // Box nháp đổi mức -> gợi ý lại loại lệnh (nếu chưa chọn tay) + qty (nếu đang tự tính)
 function posChanged(b, selectOnly) {
   if (!selectOnly && b.kind === "draft") {
-    if (!b.typeManual) b.type = posFixType(PM.suggestType(b.entry, pbCurPrice()));
+    if (!b.typeManual) b.type = posFixType(PM.suggestType(b.entry, pbCurPrice(), pbSide(b)));
     if ($pos("pos-auto").checked) {
       const f = posFunds();
-      const r = PM.riskQty({ risk: posRiskUsd(), entry: b.entry, sl: b.sl, asset: CH.asset, step: pbQtyStep(), cash: f ? f.cash : 0 });
+      const r = PM.riskQty({ risk: posRiskUsd(), entry: b.entry, sl: b.sl, asset: CH.asset, step: pbQtyStep(),
+                             cash: f ? f.cash : 0, side: pbSide(b) });
       b.qty = r.qty; b.capped = r.capped;
     }
   }
@@ -46,7 +47,7 @@ function posRender() {
   $pos("pos-type").querySelector('option[value="stop"]').disabled = posReal() && CH.asset === "crypto";
   if ($pos("pos-auto").checked) $pos("pos-qty").value = b.qty;
   const s = PM.stats(b), cap = b.capped === "cash" ? " · bị chặn theo tiền mặt" : b.capped === "max" ? " · bị chặn theo trần sàn" : "";
-  $pos("pos-info").textContent = `${posReal() ? "Alpaca paper" : "Luyện tập"} · R:R ${s.rr === null ? "-" : fmt.num(s.rr)} · ` +
+  $pos("pos-info").textContent = `${pbSide(b).toUpperCase()} · ${posReal() ? "Alpaca paper" : "Luyện tập"} · R:R ${s.rr === null ? "-" : fmt.num(s.rr)} · ` +
     `rủi ro ~${fmt.usd(s.loss)} · lời ~${fmt.usd(s.profit)} (sau phí)${cap}`;
   $pos("pos-crypto-note").hidden = !(posReal() && CH.asset === "crypto");
 }
@@ -60,31 +61,40 @@ function posDiscard() {
 
 // Body chung cho lệnh vào từ box nháp; sai -> ném lỗi tiếng Việt
 function posOrderBody(b) {
-  if (!PM.valid(b)) throw new Error("Cần SL < giá vào < TP");
+  const side = b.side === "short" ? "short" : "long";
+  if (!PM.valid({ ...b, side })) throw new Error(side === "short" ? "Short: cần TP < giá vào < SL" : "Cần SL < giá vào < TP");
   const qty = Number(b.qty);
   if (!(qty > 0)) throw new Error("Số lượng phải > 0 (tăng rủi ro hoặc nhập qty)");
   if (CH.asset === "stock" && !Number.isInteger(qty)) throw new Error("Cổ phiếu: qty phải là số nguyên");
-  return { symbol: CH.symbol, asset: CH.asset, type: b.type, qty, entry: b.entry, sl: b.sl, tp: b.tp };
+  const body = { symbol: CH.symbol, asset: CH.asset, type: b.type, qty, entry: b.entry, sl: b.sl, tp: b.tp };
+  if (side === "short") body.side = "short";  // long giữ body cũ (mặc định side = long)
+  return body;
 }
+
+// Cảnh báo bắt buộc trong modal XAC NHAN khi bán khống thật
+const POS_SHORT_WARN = "Bán khống có rủi ro lỗ không giới hạn khi giá tăng; có thể phát sinh phí vay cổ phiếu và yêu cầu ký quỹ.";
 
 async function posSubmit() {
   const b = PB.sel;
   if (!b || b.kind !== "draft") return;
   let body;
   try { body = posOrderBody(b); } catch (e) { posMsg(e.message, true); return; }
-  if (!posReal()) {
-    const pb = { side: "buy", type: body.type, qty: body.qty, sl: body.sl, tp: body.tp };
+  const short = body.side === "short", word = short ? "short" : "long";
+  if (!posReal()) {  // luyện tập: short = lệnh BÁN khi đang flat
+    const pb = { side: short ? "sell" : "buy", type: body.type, qty: body.qty, sl: body.sl, tp: body.tp };
     if (body.type !== "market") pb.price = body.entry;
-    const ok = await practiceSend("POST", `/api/practice/${PR.sid}/orders`, pb, `Đã đặt long ${body.type} ${body.qty}`);
+    const ok = await practiceSend("POST", `/api/practice/${PR.sid}/orders`, pb, `Đã đặt ${word} ${body.type} ${body.qty}`);
     if (ok) { posDiscard(); posMsg("Đã đặt lệnh luyện tập"); }
     return;
   }
   const s = PM.stats(b);
-  const html = summaryTable([["Mã", body.symbol], ["Loại", body.type + (CH.asset === "stock" ? " (bracket, GTC)" : " (GTC)")],
+  const html = summaryTable([["Mã", body.symbol], ["Chiều", short ? "SHORT (bán khống)" : "LONG"],
+    ["Loại", body.type + (CH.asset === "stock" ? " (bracket, GTC)" : " (GTC)")],
     ["Giá vào", pbFmtP(body.entry)], ["SL", pbFmtP(body.sl)], ["TP", pbFmtP(body.tp)], ["Qty", fmt.qty(body.qty)],
     ["R:R", s.rr === null ? "-" : fmt.num(s.rr)], ["Rủi ro (sau phí)", fmt.usd(s.loss)]]) +
+    (short ? `<p class="small err">${POS_SHORT_WARN}</p>` : "") +
     (CH.asset === "crypto" ? `<p class="small err">SL/TP crypto chỉ hoạt động khi bot loop --asset crypto đang chạy</p>` : "");
-  const confirm = await askConfirm("Đặt lệnh LONG (Alpaca paper)", html);
+  const confirm = await askConfirm(`Đặt lệnh ${word.toUpperCase()} (Alpaca paper)`, html);
   if (!confirm) return;
   try {
     const r = await sendJSON("POST", "/api/position", { ...body, confirm });

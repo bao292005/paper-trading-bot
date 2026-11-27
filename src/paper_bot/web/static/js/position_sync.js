@@ -2,20 +2,20 @@
 // thường: từ GET /api/position/boxes (Alpaca paper). Kéo: luyện tập PATCH ngay khi thả; thật: "Áp dụng" + XAC NHAN.
 const PS = { real: null };
 
-// Lệnh chờ luyện tập (mua có SL+TP) + vị thế có đủ cặp SL/TP con -> mô tả box
+// Lệnh MỞ chờ luyện tập (mua = long, bán khống = short; có SL+TP) + vị thế có đủ cặp SL/TP con -> mô tả box
 function psPracticeSpecs() {
   const s = PR.snap, out = [];
   if (!s) return out;
   for (const o of s.orders) {
-    if (o.role === "entry" && o.side === "buy" && o.sl && o.tp && o.price !== null) {
-      out.push({ key: "pr-" + o.id, kind: "pending", entry: o.price, sl: o.sl, tp: o.tp, qty: o.qty, type: o.type,
-                 t0: o.created, ids: { entry: o.id } });
+    if (o.role === "entry" && !o.reduce && o.sl && o.tp && o.price !== null) {
+      out.push({ key: "pr-" + o.id, kind: "pending", side: o.side === "sell" ? "short" : "long", entry: o.price,
+                 sl: o.sl, tp: o.tp, qty: o.qty, type: o.type, t0: o.created, ids: { entry: o.id } });
     }
   }
   const sl = s.orders.find((o) => o.role === "sl"), tp = s.orders.find((o) => o.role === "tp");
   if (s.position && sl && tp) {
-    out.push({ key: "pr-pos", kind: "position", entry: s.position.avg_price, sl: sl.price, tp: tp.price, qty: s.position.qty,
-               type: "vị thế", t0: sl.created, ids: { sl: sl.id, tp: tp.id } });
+    out.push({ key: "pr-pos", kind: "position", side: s.position.qty < 0 ? "short" : "long", entry: s.position.avg_price,
+               sl: sl.price, tp: tp.price, qty: s.position.qty, type: "vị thế", t0: sl.created, ids: { sl: sl.id, tp: tp.id } });
   }
   return out;
 }
@@ -34,7 +34,7 @@ function posSync() {
   }
   for (const sp of specs) {
     let b = PB.boxes.find((x) => x.key === sp.key);
-    const lv = { entry: sp.entry, sl: sp.sl, tp: sp.tp };
+    const lv = { entry: sp.entry, sl: sp.sl, tp: sp.tp, side: sp.side === "short" ? "short" : "long" };
     if (!PM.valid(lv)) { if (b) pbRemove(b); continue; }
     if (!b) {
       const t0 = sp.t0 || psDefaultT0();
@@ -44,6 +44,7 @@ function posSync() {
     Object.assign(b, lv, { key: sp.key, kind: sp.kind, qty: sp.qty, type: sp.type, ids: sp.ids || {}, orig: { ...lv } });
   }
   if (typeof posRender === "function") posRender();
+  if (typeof pdSyncShortBtn === "function") pdSyncShortBtn();  // đổi mã / vào-ra replay -> bật/tắt nút Short
   pbSchedule();
 }
 
@@ -93,14 +94,14 @@ function pbRevert(b) {
 // Thật: XAC NHAN rồi gửi. Lệnh chờ -> huỷ + đặt lại bracket; vị thế -> sửa chân SL/TP (crypto: live_state)
 async function pbApply(b) {
   if (b.account !== "real" || !b.dirty || b.busy) return;
-  const pending = b.kind === "pending", s = PM.stats(b);
+  const pending = b.kind === "pending", s = PM.stats({ ...b, qty: Math.abs(b.qty) }), SIDE = pbSide(b).toUpperCase();
   const rows = [["Mã", CH.symbol], ["Việc", pending ? "huỷ lệnh chờ cũ + đặt lại" : "sửa SL/TP của vị thế"]];
   for (const k of ["entry", "sl", "tp"]) if (b[k] !== b.orig[k]) rows.push([k.toUpperCase(), `${pbFmtP(b.orig[k])} → ${pbFmtP(b[k])}`]);
   rows.push(["Qty", fmt.qty(b.qty)], ["R:R", s.rr === null ? "-" : fmt.num(s.rr)], ["Rủi ro (sau phí)", fmt.usd(s.loss)]);
   const note = CH.asset === "crypto" ? `<p class="small err">SL/TP crypto chỉ hoạt động khi bot loop --asset crypto đang chạy</p>` : "";
-  const confirm = await askConfirm(pending ? "Sửa lệnh chờ LONG" : "Sửa SL/TP vị thế", summaryTable(rows) + note);
+  const confirm = await askConfirm(pending ? `Sửa lệnh chờ ${SIDE}` : `Sửa SL/TP vị thế ${SIDE}`, summaryTable(rows) + note);
   if (!confirm) return;
-  const base = { symbol: CH.symbol, asset: CH.asset, entry: b.entry, sl: b.sl, tp: b.tp, confirm };
+  const base = { symbol: CH.symbol, asset: CH.asset, side: pbSide(b), entry: b.entry, sl: b.sl, tp: b.tp, confirm };
   b.busy = true;
   try {
     if (pending) await sendJSON("POST", "/api/position/repost", { ...base, old_order_id: b.ids.entry, type: b.type, qty: b.qty });

@@ -80,8 +80,9 @@ Tua lại biểu đồ như TradingView Bar Replay và giao dịch giả lập t
 - Thanh điều khiển: ⏮ chọn lại điểm bắt đầu (= phiên mới), ▶/⏸, ▶| tiến 1 nến, tốc độ 0.5x/1x/3x/10x (nến/giây), ⏭ thoát.
   Đổi khung 1m…1D vẫn cắt đúng con trỏ, nến khung lớn đang hình thành chỉ gộp từ nến 1m trước con trỏ. Realtime tạm dừng khi replay.
 - Phím tắt: `R` chọn điểm bắt đầu · `→` tiến 1 nến · `Shift+→` cuộn biểu đồ · `Space` chạy/dừng · `Esc` huỷ chọn ·
-  `B` mua market · `S` bán (đóng vị thế hoặc bán số ở ô Qty). Phím không chạy khi đang gõ trong ô nhập.
-- Panel phải đổi thành **Tài khoản luyện tập** (100.000$, phí 10 bps cổ phiếu / 25 bps crypto, không bán khống): form market/limit/stop kèm SL/TP,
+  `B` mua market · `S` bán market (không có vị thế = mở **short**; ngược chiều vị thế = đóng/giảm, không đảo chiều). Phím không chạy khi đang gõ trong ô nhập.
+- Panel phải đổi thành **Tài khoản luyện tập** (100.000$, phí 10 bps cổ phiếu / 25 bps crypto): form market/limit/stop kèm SL/TP,
+  **short được cả cổ phiếu lẫn crypto** (ký quỹ 1x: giá trị short ≤ equity; equity ≤ 0 tự đóng "margin_call"; bỏ qua phí vay);
   kéo đường SL/TP/limit trên biểu đồ để sửa giá, mũi tên tại điểm khớp. Tab **Thống kê**: chỉ số kiểu MT5, equity, bảng lệnh, phiên cũ.
 - Thoát / chọn điểm mới / đổi mã: phiên có lệnh khớp được lưu DB với run_id `practice-<id>` (xem lại ở tab Thống kê hoặc ô "Bot").
 - Luyện tập trên dữ liệu ≥ 2025 sẽ "nhìn thấy" giai đoạn holdout: không ảnh hưởng bot, nhưng đừng dùng kết quả luyện tập để chỉnh bot.
@@ -98,7 +99,16 @@ Tua lại biểu đồ như TradingView Bar Replay và giao dịch giả lập t
   Crypto = lệnh market/limit GTC, SL/TP lưu `data/live_state.json` — **chỉ hoạt động khi `paper-bot loop --asset crypto` đang chạy**.
 - Sau khi đặt: lệnh chờ = box viền đứt, vị thế = box viền liền (tô P/L chưa chốt theo $ và R). Kéo để sửa:
   luyện tập lưu ngay; thật bấm **Áp dụng** (XAC NHAN) hoặc **Huỷ thay đổi** (lệnh chờ cổ phiếu = huỷ + đặt lại; vị thế = sửa chân SL/TP).
-- `Esc` thoát công cụ, `Delete` xoá box nháp. Nút Short luôn tắt (không bán khống). Chi tiết: [docs/cai-tien/WEB.md](docs/cai-tien/WEB.md).
+- `Esc` thoát công cụ, `Delete` xoá box nháp. Chi tiết: [docs/cai-tien/WEB.md](docs/cai-tien/WEB.md).
+
+### Box Short Position (bán khống)
+- Bấm **⊟ Short** (hoặc `Shift+P`). Box đảo màu: SL (đỏ) **trên** giá vào, TP (xanh) **dưới**; luôn TP < giá vào < SL.
+  R:R = (vào − TP)/(SL − vào); qty = rủi ro$/(SL − vào + phí). Gợi ý: sát giá = market, cao hơn = limit bán, thấp hơn = stop bán.
+- Luyện tập (Replay): short cổ phiếu **và** crypto. Thật (Alpaca paper): **chỉ cổ phiếu** — bracket BÁN GTC (TP limit dưới, SL stop trên),
+  server kiểm `shortable` + `easy_to_borrow` và không đang long mã đó; modal XAC NHAN có cảnh báo rủi ro lỗ không giới hạn/phí vay/ký quỹ.
+  Crypto thật: nút Short bị khoá (Alpaca không cho bán khống crypto, API trả 422).
+- Panel "Vị thế" hiện nhãn LONG/SHORT (qty âm = short) + nút **Đóng** (market ngược chiều, cần XAC NHAN).
+- Form đặt lệnh cũ (`/api/orders`) giữ nguyên hành vi; mở short thật chỉ qua box. Bot tự động (backtest/prereg/loop) vẫn **chỉ long**.
 
 ## Giao diện (UI Streamlit)
 ```bash

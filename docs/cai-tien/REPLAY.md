@@ -11,7 +11,7 @@
 - `stats.py`: `report()` gọi `mt5_report` (vị thế còn mở = trade "end" ở giá cuối, trừ phí bán ước tính); `save_session()` ghi
   fills + equity + event `practice_end` (tóm tắt, báo cáo, bảng lệnh, equity) với run_id `practice-<id>`.
 - Kế thừa: quy tắc SL-trước-TP của backtest engine; trường `SimTrade` trùng `backtest.Trade` để dùng lại `mt5_report`.
-- Hạn chế: không short; giá vốn theo trung bình (không FIFO); equity ghi theo từng bước replay nên Sharpe chỉ tham khảo.
+- Hạn chế: (đã bổ sung short — xem mục "Short" bên dưới); giá vốn theo trung bình (không FIFO); equity ghi theo từng bước replay nên Sharpe chỉ tham khảo.
 
 ## Bước 2 – API replay + practice (2026-11-27)
 - `web/api/replay.py` `GET /api/replay/bars?symbol&asset&tf&cursor&after&before&steps`: con trỏ làm tròn xuống phút,
@@ -46,3 +46,13 @@
 - Test: `tests/test_web_replay_js.py` (13: hàm thuần qua node, ≤150 dòng + `node --check`, trang chủ nạp script + ghi chú holdout),
   `test_web_index.py` thêm id mới. Toàn bộ: 661 pass.
 - Chưa làm: nút "So với bot gốc" (tuỳ chọn); test UI kéo-thả/biểu đồ thật trên trình duyệt (chỉ kiểm bằng hàm thuần + cú pháp).
+
+## Short trong tài khoản luyện tập (agent j-short, 2026-11-27)
+- Vị thế có dấu: qty > 0 long, < 0 short (`snapshot().position.side`). Bán khi không có vị thế = mở short (cổ phiếu + crypto);
+  lệnh ngược chiều mang cờ `reduce` (chỉ đóng/giảm, không SL/TP); đảo chiều trong 1 lệnh -> 422 "đóng vị thế trước".
+- Khớp: limit bán khi high ≥ giá, stop bán khi low ≤ giá; SL short (mua stop) khi high ≥ SL, TP short (mua limit) khi low ≤ TP;
+  gap -> open; cùng nến chạm cả hai -> SL trước.
+- Tiền: mở short cash += tiền bán − phí; equity = cash + qty×giá; P/L chưa chốt = (giá vốn − giá)×|qty|. Ký quỹ 1x:
+  giá trị short sau lệnh ≤ equity (sai -> 422 "...ký quỹ..."). Equity ≤ 0 -> tự đóng lý do `margin_call`. Bỏ qua phí vay (notes).
+- Thống kê: `mt5_report` tách Long/Short theo `trade.side`. UI: form chỉ gắn SL/TP cho lệnh mua mở long (short kèm SL/TP: box ⊟ Short); `B`/`S` đối xứng; nhãn LONG/SHORT.
+- Test: `tests/test_sim_short.py`, `test_web_practice.py::test_short_sai_va_loi`, `test_web_position_short.py::test_practice_short_qua_api`.

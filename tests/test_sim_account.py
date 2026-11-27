@@ -1,4 +1,4 @@
-"""Test tài khoản luyện tập (sim/account.py + stats.py): khớp lệnh, SL/TP, phí, crypto lẻ, chống nhìn trước, không bán khống."""
+"""Test tài khoản luyện tập (sim/account.py + stats.py): khớp lệnh, SL/TP, phí, crypto lẻ, chống nhìn trước, lệnh bán đóng long (short: test_sim_short.py)."""
 
 import sqlite3
 
@@ -75,14 +75,11 @@ def test_tp_va_sua_lenh_con():
     assert a.trades[0].pnl == pytest.approx((104 - 100) * 2 - (200 + 208) * 0.001)
 
 
-def test_khong_ban_khong():
+def test_lenh_ban_dong_long_khong_mo_short():
+    """Đang long: lệnh bán = lệnh đóng (reduce). Hết vị thế thì lệnh bán còn chờ bị huỷ, KHÔNG mở short."""
     a = acc()
-    with pytest.raises(ValueError, match="bán khống"):
-        a.place_order("sell", "market", 1)
     with pytest.raises(ValueError):
         a.close_position()
-    with pytest.raises(ValueError):
-        a.place_order("sell", "limit", 1, price=101, sl=105)
     a.place_order("buy", "market", 3)
     a.advance([bar(0, 100, 100, 100, 100)], T0 + 60)
     s1 = a.place_order("sell", "market", 3)

@@ -5,7 +5,8 @@ Quy ước (giống MT5, ghi rõ chỗ khác):
     (lấy từ cột equity của engine, đánh giá lại ở giá đóng cửa mỗi ngày).
   - P/L mỗi trade là SAU phí (Trade.pnl). Vị thế còn mở cuối kỳ (exit_reason "end") được coi như
     đóng ở close ngày cuối, trừ phí bán ước tính - như MT5 tự đóng lệnh khi hết test.
-  - Engine chỉ mua (không bán khống) nên Short trades luôn = 0.
+  - Long/Short tách theo trade.side (mặc định "long"). Engine backtest chỉ mua nên Short trades = 0;
+    tài khoản luyện tập (sim) có thể có lệnh short.
   - Sharpe: năm hoá từ lợi suất NGÀY của equity (metrics.sharpe, prereg mục 6), KHÔNG phải
     công thức Sharpe theo từng deal của MT5.
   - Balance chỉ ghi theo ngày: nhiều lệnh đóng cùng ngày được cộng gộp.
@@ -107,6 +108,9 @@ def mt5_report(result, initial_cash: float, periods_per_year: int = 252) -> dict
     gross_profit, gross_loss = float(sum(wins)), float(sum(losses))
     net = gross_profit + gross_loss
     n = len(trades)
+    # tách Long/Short theo t.side (trade không có side, ví dụ backtest long-only, coi là long)
+    shorts = [float(t.pnl) for t in trades if getattr(t, "side", "long") == "short"]
+    longs = [float(t.pnl) for t in trades if getattr(t, "side", "long") != "short"]
 
     eq = res.equity["equity"] if len(res.equity) else pd.Series(dtype=float)
     bal = balance_curve(trades, initial_cash, eq.index if len(eq) else None)
@@ -140,10 +144,10 @@ def mt5_report(result, initial_cash: float, periods_per_year: int = 252) -> dict
         "equity_drawdown_relative_pct": eq_dd["relative_pct"],
         "equity_drawdown_relative": eq_dd["relative"],
         "total_trades": n,
-        "short_trades": 0,
-        "short_won_pct": None,
-        "long_trades": n,
-        "long_won_pct": _ratio(len(wins), n),
+        "short_trades": len(shorts),
+        "short_won_pct": _ratio(sum(p > 0 for p in shorts), len(shorts)) if shorts else None,
+        "long_trades": len(longs),
+        "long_won_pct": _ratio(sum(p > 0 for p in longs), len(longs)),
         "profit_trades": len(wins),
         "profit_trades_pct": _ratio(len(wins), n),
         "loss_trades": len(losses),

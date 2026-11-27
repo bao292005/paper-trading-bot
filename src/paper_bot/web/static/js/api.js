@@ -35,6 +35,11 @@ const fmt = {
   cls: (v) => v > 0 ? "up" : v < 0 ? "down" : "",
 };
 
+// Nhãn chiều vị thế: qty âm = SHORT (đỏ), dương = LONG (xanh)
+function sideTag(qty) {
+  return qty < 0 ? '<span class="tag down">SHORT</span>' : '<span class="tag up">LONG</span>';
+}
+
 // Thoát HTML để chèn text từ server vào innerHTML an toàn
 function esc(s) {
   return String(s ?? "").replace(/[&<>"']/g, (c) =>

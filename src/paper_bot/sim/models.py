@@ -17,13 +17,14 @@ class Order:
     type: str            # market | limit | stop
     qty: float
     price: Optional[float] = None   # giá limit/stop (market: None)
-    sl: Optional[float] = None      # SL/TP gắn kèm lệnh MUA (bracket giả lập)
+    sl: Optional[float] = None      # SL/TP gắn kèm lệnh MỞ vị thế (bracket giả lập)
     tp: Optional[float] = None
     created: int = 0                # con trỏ (unix giây) lúc đặt: chỉ xét nến bắt đầu >= created
-    role: str = "entry"             # entry | sl | tp (sl/tp = lệnh con bán, sinh ra khi lệnh mua khớp)
-    parent: Optional[str] = None    # lệnh con: id lệnh mua gốc (cặp SL/TP là OCO)
+    role: str = "entry"             # entry | sl | tp | margin (sl/tp = lệnh con đóng, sinh ra khi lệnh mở khớp)
+    parent: Optional[str] = None    # lệnh con: id lệnh mở gốc (cặp SL/TP là OCO)
     status: str = "pending"         # pending | filled | cancelled | rejected
     note: str = ""
+    reduce: bool = False            # True = lệnh ĐÓNG/giảm vị thế (không bao giờ mở chiều ngược lại)
 
     def to_dict(self) -> dict:
         return dict(self.__dict__)
@@ -31,24 +32,27 @@ class Order:
 
 @dataclass
 class SimTrade:
-    """Một lần đóng (toàn bộ hoặc một phần) vị thế mua. Cùng tên trường với backtest.Trade để dùng mt5_report."""
+    """Một lần đóng (toàn bộ hoặc một phần) vị thế. Cùng tên trường với backtest.Trade để dùng mt5_report.
+    qty luôn dương; side = "long" | "short" (short lời khi giá giảm)."""
     symbol: str
     qty: float
     entry_date: pd.Timestamp
     entry_price: float
     exit_date: pd.Timestamp
     exit_price: float
-    exit_reason: str    # manual | stop_loss | take_profit | end
-    fee: float = 0.0    # phí mua (phần tương ứng) + phí bán
+    exit_reason: str    # manual | stop_loss | take_profit | margin_call | end
+    fee: float = 0.0    # phí lệnh mở (phần tương ứng) + phí lệnh đóng
+    side: str = "long"
 
     @property
     def pnl(self) -> float:
-        return (self.exit_price - self.entry_price) * self.qty - self.fee
+        move = self.exit_price - self.entry_price
+        return (move if self.side == "long" else -move) * self.qty - self.fee
 
     def to_dict(self) -> dict:
-        return {"qty": self.qty, "entry_time": int(self.entry_date.timestamp()), "entry_price": self.entry_price,
-                "exit_time": int(self.exit_date.timestamp()), "exit_price": self.exit_price,
-                "exit_reason": self.exit_reason, "fee": self.fee, "pnl": self.pnl}
+        return {"qty": self.qty, "side": self.side, "entry_time": int(self.entry_date.timestamp()),
+                "entry_price": self.entry_price, "exit_time": int(self.exit_date.timestamp()),
+                "exit_price": self.exit_price, "exit_reason": self.exit_reason, "fee": self.fee, "pnl": self.pnl}
 
 
 def to_ts(unix: int) -> pd.Timestamp:
@@ -79,11 +83,12 @@ def clean_price(v, name: str, required: bool = False) -> Optional[float]:
     return float(v)
 
 
-def check_bracket(sl: Optional[float], tp: Optional[float], ref: Optional[float]) -> None:
-    """Lệnh mua: SL < giá tham chiếu < TP."""
+def check_bracket(sl: Optional[float], tp: Optional[float], ref: Optional[float], side: str = "long") -> None:
+    """Long: SL < giá tham chiếu < TP. Short: TP < giá tham chiếu < SL."""
     if ref is None:
         return
-    if sl is not None and not sl < ref:
-        raise ValueError(f"SL ({sl:g}) phải < giá vào ({ref:g})")
-    if tp is not None and not tp > ref:
-        raise ValueError(f"TP ({tp:g}) phải > giá vào ({ref:g})")
+    long_ = side == "long"
+    if sl is not None and not (sl < ref if long_ else sl > ref):
+        raise ValueError(f"SL ({sl:g}) phải {'<' if long_ else '>'} giá vào ({ref:g})")
+    if tp is not None and not (tp > ref if long_ else tp < ref):
+        raise ValueError(f"TP ({tp:g}) phải {'>' if long_ else '<'} giá vào ({ref:g})")

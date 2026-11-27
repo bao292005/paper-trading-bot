@@ -1,5 +1,26 @@
 # Nhật ký web app (agent j-web)
 
+## Short (agent j-short, 2026-11-27)
+Lệnh SHORT: box Short Position + bán khống (luyện tập: stock + crypto; thật: chỉ cổ phiếu). Bot tự động vẫn chỉ long.
+- **Bước 1 – sim** (`sim/*`, `report.py`): vị thế có dấu (qty < 0 = short); bán khi không có vị thế = mở short, mua khi short = đóng/giảm;
+  lệnh đảo chiều -> 422 "đóng vị thế trước". SL short ở trên (khớp khi high ≥ SL), TP ở dưới; gap khớp open; SL trước TP.
+  Tiền: mở short cash += tiền bán − phí; equity = cash + qty×giá; ký quỹ 1x (giá trị short sau lệnh ≤ equity);
+  equity ≤ 0 -> tự đóng `margin_call` (lệnh mua stop tại cash/|qty|). Bỏ qua phí vay (ghi trong notes). `mt5_report`
+  tách `short_trades/long_trades` + tỉ lệ thắng theo `trade.side`. Test `tests/test_sim_short.py`.
+- **Bước 2 – box Short (JS)**: tham số `side` xuyên suốt `position_*.js` (không nhân đôi code): `PM.dir/lohi`, kéo giữ TP<entry<SL,
+  R:R = (entry−TP)/(SL−entry), qty = rủi ro/(SL−entry+phí), gợi ý market/limit bán (trên giá)/stop bán (dưới giá);
+  box đảo màu (`.pbox.short`), nút ⊟ Short / `Shift+P`; thật + crypto -> khoá nút kèm tooltip. Test `test_web_position_short_js.py`.
+- **Bước 3 – Alpaca paper**: `POST /api/position` nhận `side` (mặc định long). Short cổ phiếu = bracket **SELL** GTC (market/limit/
+  stop_limit, limit = entry−0,5% nhưng > TP); trước khi gửi: `get_asset` phải `shortable` + `easy_to_borrow`, không đang long mã đó,
+  qty nguyên; crypto short -> 422 "Alpaca không cho bán khống crypto". repost/legs dùng cùng luật theo chiều.
+  `GET /api/position/boxes` nhận bracket bán = box short, vị thế qty < 0 = short. Mới: `POST /api/position/close` (XAC NHAN,
+  market ngược chiều đúng |qty|: short -> MUA). `/api/orders` (form cũ) giữ nguyên hành vi — short thật chỉ mở qua box.
+  Test `tests/test_web_position_short.py` (bracket SELL, không shortable/crypto/đang long -> 422 không gửi, thiếu XAC NHAN -> 403,
+  box short, đóng short = lệnh mua, short luyện tập qua `/api/practice`).
+- **Bước 4 – UI**: modal XAC NHAN khi short thật thêm dòng cảnh báo rủi ro lỗ không giới hạn/phí vay/ký quỹ; panel vị thế có nhãn
+  LONG/SHORT + nút Đóng; form luyện tập: S/bán khi không có vị thế = mở short (không SL/TP — short kèm SL/TP dùng box), phím B/S đối xứng
+  (ngược chiều = đóng/giảm).
+
 ## Long Position box (agent j-pos, 2026-11-27)
 Box TP/SL kéo thả kiểu TradingView trên trang `/`, chỉ long, cho cả tài khoản luyện tập (replay) và Alpaca paper.
 - **JS** (mỗi file ≤150 dòng): `position_math.js` (PM: snap, ATR14, mức mặc định, phí, qty theo rủi ro, R:R, gợi ý loại lệnh,

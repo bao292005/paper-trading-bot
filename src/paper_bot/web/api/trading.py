@@ -105,11 +105,11 @@ def _entry_price(o) -> Optional[float]:
     return num(getattr(o, "limit_price", None)) if t == "limit" else num(getattr(o, "stop_price", None)) if "stop" in t else None
 
 
-def _exit_legs(orders_) -> dict:
-    """Lệnh bán: chân stop (SL) và chân limit (TP) đầu tiên -> {"sl": (giá, id, t), "tp": (...)}."""
+def _exit_legs(orders_, close_side: str = "sell") -> dict:
+    """Lệnh đóng (long: bán, short: mua): chân stop (SL) và chân limit (TP) đầu tiên -> {"sl": (giá, id, t), "tp": (...)}."""
     out = {}
     for o in orders_:
-        if enum_text(o.side) != "sell":
+        if enum_text(o.side) != close_side:
             continue
         t = enum_text(o.order_type)
         if "stop" in t and "sl" not in out:
@@ -131,8 +131,9 @@ def _crypto_inc(client, symbol: str) -> dict:
 
 @router.get("/api/position/boxes")
 def position_boxes(request: Request, symbol: str, asset: str = "stock"):
-    """Box Long Position của 1 mã (CHỈ ĐỌC): lệnh mua chờ có SL/TP (pending) + vị thế có SL/TP (position).
-    Cổ phiếu: SL/TP = chân bracket trên sàn. Crypto: SL/TP lấy từ data/live_state.json (bot tự quản)."""
+    """Box Long/Short Position của 1 mã (CHỈ ĐỌC): lệnh vào chờ có SL/TP (pending) + vị thế có SL/TP (position).
+    Cổ phiếu: SL/TP = chân bracket trên sàn (bracket mua = long, bracket bán = short; vị thế qty < 0 = short).
+    Crypto (chỉ long): SL/TP lấy từ data/live_state.json (bot tự quản)."""
     from alpaca.trading.enums import QueryOrderStatus
     from alpaca.trading.requests import GetOrdersRequest
 
@@ -141,33 +142,37 @@ def position_boxes(request: Request, symbol: str, asset: str = "stock"):
     req = GetOrdersRequest(status=QueryOrderStatus.OPEN, nested=True, limit=100)
     rows = [o for o in call_alpaca(client.get_orders, filter=req) if _sym_asset(o.symbol)[0] == symbol]
     pos = next((p for p in call_alpaca(client.get_all_positions)
-                if _sym_asset(p.symbol)[0] == symbol and float(p.qty) > 0), None)
+                if _sym_asset(p.symbol)[0] == symbol and float(p.qty) != 0), None)
     boxes, crypto = [], asset == "crypto"
     saved = {}
     if crypto:
         from ...live import STATE_PATH, get_crypto_sltp
         saved = get_crypto_sltp(symbol, request.app.state.live_state_path or STATE_PATH)
-    exits = []  # lệnh bán đang mở không thuộc lệnh mua đang chờ (= SL/TP của vị thế)
+    exits = []  # lệnh đang mở không phải lệnh vào chờ (= SL/TP của vị thế)
     for o in rows:
-        legs = list(getattr(o, "legs", None) or [])
-        if enum_text(o.side) != "buy":
-            exits.append(o)
-            continue
-        if enum_text(o.status) == "filled":  # mẹ đã khớp mà vẫn trả kèm chân đang mở
+        legs, side = list(getattr(o, "legs", None) or []), enum_text(o.side)
+        if enum_text(getattr(o, "status", None)) == "filled":  # mẹ đã khớp mà vẫn trả kèm chân đang mở
             exits.extend(legs)
             continue
-        entry, lv = _entry_price(o), _exit_legs(legs)
+        # lệnh vào: cổ phiếu = mẹ bracket (có chân); crypto = lệnh mua (SL/TP trong live_state)
+        if (crypto and side != "buy") or (not crypto and not legs):
+            exits.append(o)
+            continue
+        short = side == "sell"
+        entry, lv = _entry_price(o), _exit_legs(legs, "buy" if short else "sell")
         sl, tp = (lv["sl"][0], lv["tp"][0]) if "sl" in lv and "tp" in lv else (None, None)
         p = saved.get("pending") or {}
         if crypto and p.get("order_id") == str(o.id):
             sl, tp = p.get("stop_loss"), p.get("take_profit")
         if entry is None or sl is None or tp is None:
             continue
-        boxes.append({"key": "rl-" + str(o.id), "kind": "pending", "entry": entry, "sl": sl, "tp": tp,
+        boxes.append({"key": "rl-" + str(o.id), "kind": "pending", "side": "short" if short else "long",
+                      "entry": entry, "sl": sl, "tp": tp,
                       "qty": num(o.qty), "type": "limit" if enum_text(o.order_type) == "limit" else "stop",
                       "t0": _unix(getattr(o, "submitted_at", None)), "ids": {"entry": str(o.id)}})
     if pos is not None:
-        lv, s = _exit_legs(exits), saved.get("sltp") or {}
+        pshort = float(pos.qty) < 0
+        lv, s = _exit_legs(exits, "buy" if pshort else "sell"), saved.get("sltp") or {}
         if crypto and s.get("stop_loss") and s.get("take_profit"):
             sl, tp, ids, t0 = s["stop_loss"], s["take_profit"], {}, None
         elif not crypto and "sl" in lv and "tp" in lv:
@@ -176,7 +181,8 @@ def position_boxes(request: Request, symbol: str, asset: str = "stock"):
         else:
             sl = None
         if sl is not None:
-            boxes.append({"key": "rp-" + symbol, "kind": "position", "entry": float(pos.avg_entry_price), "sl": sl,
+            boxes.append({"key": "rp-" + symbol, "kind": "position", "side": "short" if pshort else "long",
+                          "entry": float(pos.avg_entry_price), "sl": sl,
                           "tp": tp, "qty": float(pos.qty), "type": "vị thế", "t0": t0, "ids": ids})
     return {"symbol": symbol, "asset": asset, "boxes": boxes, "inc": _crypto_inc(client, symbol) if crypto else None}
 

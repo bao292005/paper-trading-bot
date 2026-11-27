@@ -123,5 +123,12 @@ body.replay-on .real-only, body:not(.replay-on) .practice-only { display: none; 
           background: rgba(19, 23, 34, .85); color: var(--text); }
 .pb-lab-tp { color: var(--up); } .pb-lab-sl { color: var(--down); }
 .pb-actions { pointer-events: auto; display: flex; gap: 4px; }
+/* Short: SL (đỏ) nằm TRÊN entry, TP (xanh) nằm DƯỚI -> đường mức ở mép ngoài */
+.pbox.short .pb-tp { border-top: none; border-bottom: 2px solid var(--up); }
+.pbox.short .pb-sl { border-bottom: none; border-top: 2px solid var(--down); }
+.pbox.short.pending .pb-tp, .pbox.short.pending .pb-sl { border-style: dashed; }
 #pos-long-btn.active { background: var(--up); color: #111; }
+#pos-short-btn.active { background: var(--down); color: #111; }
+/* Nhãn chiều vị thế trong bảng (LONG xanh / SHORT đỏ) */
+.tag { font-size: 10px; font-weight: 600; padding: 0 4px; border: 1px solid currentColor; border-radius: 3px; }
 #pos-card { border: 1px solid #2f4f4a; }

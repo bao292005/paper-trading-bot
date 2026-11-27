@@ -9,8 +9,8 @@ from typing import Any, Dict
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
 
 from ...ui.core import build_once_command, run_command
-from .order_rules import (guard, require_confirm, stop_limit_price, validate_crypto_web_order, validate_levels,
-                          validate_order, validate_order_id, validate_position)
+from .order_rules import (ORDER_SYMBOL_RE, guard, position_side, require_confirm, stop_limit_price,
+                          validate_crypto_web_order, validate_levels, validate_order, validate_order_id, validate_position)
 from .trading import call_alpaca, enum_text, get_client
 
 router = APIRouter()
@@ -96,21 +96,37 @@ def cancel_order(order_id: str, request: Request, body: Dict[str, Any] = Body(..
     return {"ok": True, "id": oid}
 
 
-# ---------- Box Long Position (chỉ long, GTC) ----------
+# ---------- Box Long/Short Position (GTC). Short chỉ cổ phiếu ----------
 def build_bracket_request(o: Dict[str, Any]):
-    """Cổ phiếu: bracket GTC (vào market/limit/stop_limit + TP limit + SL stop)."""
+    """Cổ phiếu: bracket GTC (vào market/limit/stop_limit + TP limit + SL stop).
+    Long = bracket MUA (SL dưới, TP trên); short = bracket BÁN (TP dưới, SL trên; stop = stop bán)."""
     from alpaca.trading.enums import OrderClass, OrderSide, TimeInForce
     from alpaca.trading.requests import (LimitOrderRequest, MarketOrderRequest, StopLimitOrderRequest, StopLossRequest,
                                          TakeProfitRequest)
 
-    common = dict(symbol=o["symbol"], qty=o["qty"], side=OrderSide.BUY, time_in_force=TimeInForce.GTC,
-                  order_class=OrderClass.BRACKET, take_profit=TakeProfitRequest(limit_price=o["tp"]),
-                  stop_loss=StopLossRequest(stop_price=o["sl"]))
+    pside = o.get("position", "long")
+    common = dict(symbol=o["symbol"], qty=o["qty"], side=OrderSide.SELL if pside == "short" else OrderSide.BUY,
+                  time_in_force=TimeInForce.GTC, order_class=OrderClass.BRACKET,
+                  take_profit=TakeProfitRequest(limit_price=o["tp"]), stop_loss=StopLossRequest(stop_price=o["sl"]))
     if o["type"] == "limit":
         return LimitOrderRequest(limit_price=o["entry"], **common)
     if o["type"] == "stop":
-        return StopLimitOrderRequest(stop_price=o["entry"], limit_price=stop_limit_price(o["entry"], o["tp"]), **common)
+        return StopLimitOrderRequest(stop_price=o["entry"], limit_price=stop_limit_price(o["entry"], o["tp"], pside),
+                                     **common)
     return MarketOrderRequest(**common)
+
+
+def _check_short(client, symbol: str) -> None:
+    """Trước khi bán khống cổ phiếu: mã phải shortable + easy_to_borrow, và KHÔNG đang long mã đó (sai -> 422)."""
+    from .trading import _sym_asset
+
+    a = call_alpaca(client.get_asset, symbol)
+    why = [k for k in ("shortable", "easy_to_borrow") if getattr(a, k, None) is not True]
+    if why:
+        raise HTTPException(422, f"{symbol} không bán khống được trên Alpaca ({', '.join(why)} = false)")
+    for p in call_alpaca(client.get_all_positions):
+        if _sym_asset(p.symbol)[0] == symbol and float(p.qty) > 0:
+            raise HTTPException(422, f"đang long {symbol} {float(p.qty):g}: đóng vị thế long trước khi short")
 
 
 def _state_path(request: Request):
@@ -137,25 +153,29 @@ def _position_order(request: Request, body: Dict[str, Any]):
     require_confirm(body)
     client = get_client(request)
     min_qty = _crypto_min_qty(client, body.get("symbol", "")) if body.get("asset") == "crypto" else 0.0
-    return client, validate_position(body, min_qty)
+    o = validate_position(body, min_qty)
+    if o["position"] == "short":
+        _check_short(client, o["symbol"])
+    return client, o
 
 
 @router.post("/api/position", dependencies=[Depends(guard)])
 def place_position(request: Request, body: Dict[str, Any] = Body(...)):
-    """Đặt lệnh LONG từ box: cổ phiếu bracket GTC; crypto market/limit GTC + SL/TP vào live_state."""
+    """Đặt lệnh từ box: long (mặc định) hoặc short (chỉ cổ phiếu, bracket BÁN). Cổ phiếu bracket GTC;
+    crypto (chỉ long) market/limit GTC + SL/TP vào live_state."""
     client, o = _position_order(request, body)
     log_event(request, "web_position_order",
-              f"long {o['qty']} {o['symbol']} {o['type']} @ {o['entry']} SL {o['sl']} TP {o['tp']}", o)
+              f"{o['position']} {o['qty']} {o['symbol']} {o['type']} @ {o['entry']} SL {o['sl']} TP {o['tp']}", o)
     return {"ok": True, "symbol": o["symbol"], **_submit_position(request, client, o)}
 
 
 @router.post("/api/position/repost", dependencies=[Depends(guard)])
 def repost_position(request: Request, body: Dict[str, Any] = Body(...)):
-    """Sửa lệnh mua đang chờ (giá vào/SL/TP): Alpaca không sửa được chân đang 'held' -> huỷ lệnh cũ + đặt lại."""
+    """Sửa lệnh vào đang chờ (giá vào/SL/TP): Alpaca không sửa được chân đang 'held' -> huỷ lệnh cũ + đặt lại."""
     client, o = _position_order(request, body)
     old = validate_order_id(str(body.get("old_order_id", "")))
-    log_event(request, "web_position_repost", f"huỷ {old} + đặt lại long {o['qty']} {o['symbol']} @ {o['entry']}",
-              {**o, "old_order_id": old})
+    log_event(request, "web_position_repost",
+              f"huỷ {old} + đặt lại {o['position']} {o['qty']} {o['symbol']} @ {o['entry']}", {**o, "old_order_id": old})
     call_alpaca(client.cancel_order_by_id, old)
     return {"ok": True, "symbol": o["symbol"], "old_id": old, **_submit_position(request, client, o)}
 
@@ -168,7 +188,7 @@ def edit_position_legs(request: Request, body: Dict[str, Any] = Body(...)):
 
     require_confirm(body)
     crypto = body.get("asset", "stock") == "crypto"
-    lv = validate_levels(body, crypto)
+    lv = validate_levels(body, crypto, position_side(body, crypto))  # short: TP < entry < SL
     sym = body.get("symbol")
     if crypto:
         from ...config import CRYPTO_UNIVERSE
@@ -194,6 +214,36 @@ def edit_position_legs(request: Request, body: Dict[str, Any] = Body(...)):
         done["tp"] = str(getattr(call_alpaca(client.replace_order_by_id, legs["tp_id"],
                                              ReplaceOrderRequest(limit_price=lv["tp"])), "id", ""))
     return {"ok": True, "symbol": sym, "replaced": done}
+
+
+@router.post("/api/position/close", dependencies=[Depends(guard)])
+def close_position(request: Request, body: Dict[str, Any] = Body(...)):
+    """Đóng cả vị thế bằng lệnh market ngược chiều: long -> BÁN, short -> MUA (cổ phiếu DAY, crypto GTC).
+    Chỉ đóng đúng |qty| đang có (không đảo chiều)."""
+    from alpaca.trading.enums import OrderSide, TimeInForce
+    from alpaca.trading.requests import MarketOrderRequest
+
+    from ...config import CRYPTO_UNIVERSE
+    from .trading import _sym_asset
+
+    require_confirm(body)
+    sym = body.get("symbol")
+    if not isinstance(sym, str) or not (ORDER_SYMBOL_RE.fullmatch(sym) or sym in CRYPTO_UNIVERSE):
+        raise HTTPException(422, "mã không hợp lệ")
+    client = get_client(request)
+    pos = next((p for p in call_alpaca(client.get_all_positions)
+                if _sym_asset(p.symbol)[0] == sym and float(p.qty) != 0), None)
+    if pos is None:
+        raise HTTPException(404, f"không có vị thế {sym}")
+    qty, crypto = float(pos.qty), sym in CRYPTO_UNIVERSE
+    side = OrderSide.BUY if qty < 0 else OrderSide.SELL
+    n = abs(qty) if crypto else int(round(abs(qty)))
+    log_event(request, "web_close_position", f"đóng {'short' if qty < 0 else 'long'} {sym}: {side.value} {n:g}",
+              {"symbol": sym, "qty": qty, "side": side.value})
+    req = MarketOrderRequest(symbol=sym, qty=n, side=side, time_in_force=TimeInForce.GTC if crypto else TimeInForce.DAY)
+    res = call_alpaca(client.submit_order, order_data=req)
+    return {"ok": True, "symbol": sym, "side": side.value, "qty": n, "id": str(getattr(res, "id", "")),
+            "status": enum_text(getattr(res, "status", None))}
 
 
 @router.post("/api/bot/run", dependencies=[Depends(guard)])

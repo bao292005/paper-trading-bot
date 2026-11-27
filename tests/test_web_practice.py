@@ -76,10 +76,12 @@ def test_khong_nhin_truoc(env):
     assert post(c, f"/api/practice/{sid}/advance", {"to": ny_to_unix("2024-03-05 10:00")}, 422)
 
 
-def test_khong_ban_khong_va_loi(env):
+def test_short_sai_va_loi(env):
     c, _ = env
     sid = new(c)["id"]
-    assert "bán khống" in post(c, f"/api/practice/{sid}/orders", {"side": "sell", "type": "market", "qty": 1}, 422)["detail"]
+    # bán khi flat = mở short: SL phải TRÊN giá vào, ký quỹ 1x
+    assert "SL" in post(c, f"/api/practice/{sid}/orders", {"side": "sell", "type": "market", "qty": 1, "sl": 100}, 422)["detail"]
+    assert "ký quỹ" in post(c, f"/api/practice/{sid}/orders", {"side": "sell", "type": "market", "qty": 5000}, 422)["detail"]
     post(c, f"/api/practice/{sid}/close", code=422)
     post(c, f"/api/practice/{sid}/orders", {"side": "buy", "type": "limit", "qty": 1.5, "price": 100}, 422)
     assert c.delete(f"/api/practice/{sid}/orders/o9", headers=DEL).status_code == 404

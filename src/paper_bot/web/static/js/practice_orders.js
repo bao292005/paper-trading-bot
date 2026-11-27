@@ -13,12 +13,17 @@ function practiceOrderBody(side, type) {
     body.price = prNum("pr-price");
     if (!(body.price > 0)) throw new Error("Lệnh limit/stop cần giá");
   }
-  if (side === "buy") {
+  if (prSlTp(side)) {  // form: SL/TP chỉ cho lệnh MUA mở long; short kèm SL/TP thì dùng box ⊟ Short
     body.sl = prNum("pr-sl");
     body.tp = prNum("pr-tp");
   }
   return body;
 }
+
+// Qty vị thế luyện tập (âm = short); lệnh "mở" = cùng chiều hoặc đang không có vị thế
+function prPosQty() { return (PR.snap && PR.snap.position && PR.snap.position.qty) || 0; }
+function prOpens(side) { return side === "buy" ? prPosQty() >= 0 : prPosQty() <= 0; }
+function prSlTp(side) { return side === "buy" && prOpens("buy"); }
 
 async function practiceSend(method, url, body, okText) {
   if (!PR.sid) { practiceMsg(PR.ended ? "Phiên đã kết thúc" : "Chưa có phiên luyện tập (bấm Replay)", true); return null; }
@@ -38,19 +43,20 @@ function practicePlace(side, type) {
                `Đã đặt ${what}` + (type === "market" ? " — khớp ở giá mở nến 1m kế tiếp (bấm → hoặc ▶)" : ""));
 }
 
-// S: có vị thế -> bán market đúng số ở ô qty (tối đa = cả vị thế); không có -> báo không bán khống
-function practiceSellKey() {
-  const pos = PR.snap && PR.snap.position;
-  if (!pos) { practiceMsg("Không có vị thế để bán (không bán khống)", true); return; }
+// B/S: lệnh ngược chiều vị thế -> đóng bớt đúng số ở ô qty (≥ cả vị thế = đóng hết, không đảo chiều);
+// cùng chiều/không có vị thế -> mở thêm (S lúc không có vị thế = bán khống)
+function practiceKey(side) {
+  const q = prPosQty();
+  if (prOpens(side)) { practicePlace(side, "market"); return; }
   const qty = prNum("pr-qty");
-  if (!(qty > 0) || qty >= pos.qty) practiceSend("POST", `/api/practice/${PR.sid}/close`, {}, "Đã đặt lệnh đóng vị thế");
-  else practicePlace("sell", "market");
+  if (!(qty > 0) || qty >= Math.abs(q)) practiceSend("POST", `/api/practice/${PR.sid}/close`, {}, "Đã đặt lệnh đóng vị thế");
+  else practicePlace(side, "market");
 }
 
 function practiceSyncForm() {
-  const type = document.getElementById("pr-type").value, buy = document.getElementById("pr-side").value === "buy";
+  const type = document.getElementById("pr-type").value, side = document.getElementById("pr-side").value;
   document.getElementById("pr-price").disabled = type === "market";
-  for (const id of ["pr-sl", "pr-tp"]) document.getElementById(id).disabled = !buy;
+  for (const id of ["pr-sl", "pr-tp"]) document.getElementById(id).disabled = !prSlTp(side);
 }
 
 function selectSideTab(tab) {
@@ -79,8 +85,8 @@ function initPractice() {
   document.addEventListener("keydown", (ev) => {
     if (!RP.on || RM.ignoreKey(ev)) return;
     const k = ev.key.toLowerCase();
-    if (k === "b") { ev.preventDefault(); practicePlace("buy", "market"); }
-    else if (k === "s") { ev.preventDefault(); practiceSellKey(); }
+    if (k === "b") { ev.preventDefault(); practiceKey("buy"); }
+    else if (k === "s") { ev.preventDefault(); practiceKey("sell"); }
   });
   initPracticeDrag();
   initPracticeStats();

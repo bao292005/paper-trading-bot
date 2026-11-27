@@ -14,10 +14,11 @@ from .models import SimTrade, to_ts
 def trades_with_open(acc: PracticeAccount) -> list:
     """Trade đã đóng + vị thế còn mở coi như đóng ở giá cuối (trừ phí bán ước tính), như MT5 khi hết test."""
     out = list(acc.trades)
-    if acc.qty > EPS and acc.last_price is not None:
-        fee = acc.fee_pool + acc.qty * acc.last_price * acc.fee_bps / 1e4
-        out.append(SimTrade(acc.symbol, acc.qty, to_ts(acc.opened), acc.avg, to_ts(acc.cursor),
-                            acc.last_price, "end", fee))
+    q = abs(acc.qty)
+    if q > EPS and acc.last_price is not None:
+        fee = acc.fee_pool + q * acc.last_price * acc.fee_bps / 1e4
+        out.append(SimTrade(acc.symbol, q, to_ts(acc.opened), acc.avg, to_ts(acc.cursor),
+                            acc.last_price, "end", fee, acc.side))
     return out
 
 
