@@ -39,9 +39,13 @@ PARAM_SPECS = {
     "ma_short": (int, 2, 200), "ma_long": (int, 3, 400), "rsi_period": (int, 2, 60),
     "rsi_oversold": (float, 1, 49), "rsi_overbought": (float, 51, 99),
     "risk.atr_stop_mult": (float, 0.1, 10), "risk.take_profit_mult": (float, 0.1, 20),
-    "risk.risk_per_trade": (float, 0.001, 0.2),
+    "risk.risk_per_trade": (float, 0.001, 0.2), "risk.position_pct": (float, 0.01, 1.0),
 }
 FULL_ONLY_RISK = ("atr_stop_mult", "take_profit_mult")  # B2_goc chỉ có risk_per_trade
+STRATEGY_NAMES = ("B2_goc", "FULL", "MA_noSLTP", "MA_RR1")
+# risk được dùng theo chiến lược; khoá khác gửi lên (từ form chung) bị bỏ qua sau khi kiểm tra giá trị
+RISK_USED = {"B2_goc": {"risk_per_trade"}, "FULL": {"atr_stop_mult", "take_profit_mult", "risk_per_trade"},
+             "MA_noSLTP": {"position_pct"}, "MA_RR1": {"position_pct", "atr_stop_mult"}}
 
 
 def bad(msg: str):
@@ -110,8 +114,8 @@ def check_section(body: dict, key: str) -> dict:
 def build_config(body: Dict[str, Any], with_dates: bool = True) -> dict:
     """body từ trình duyệt -> config cho run_tester. Mọi giá trị đã kiểm tra và ép kiểu."""
     strategy = body.get("strategy", "B2_goc")
-    if strategy not in ("B2_goc", "FULL"):
-        bad("strategy phải là B2_goc hoặc FULL")
+    if strategy not in STRATEGY_NAMES:
+        bad(f"strategy phải thuộc {list(STRATEGY_NAMES)}")
     asset = check_asset(body.get("asset", "stock"))
     lim = asset_limits(asset)
     cfg: Dict[str, Any] = {"symbols": check_symbols(body.get("symbols"), asset), "strategy": strategy}
@@ -141,8 +145,8 @@ def build_config(body: Dict[str, Any], with_dates: bool = True) -> dict:
             if full not in PARAM_SPECS:
                 bad(f"{key}.{name} không được phép")
             val = num(v, full, *PARAM_SPECS[full])
-            if strategy == "B2_goc" and name in FULL_ONLY_RISK:
-                continue  # B2_goc không có SL/TP theo ATR: bỏ qua (sau khi đã kiểm tra giá trị)
+            if key == "risk" and name not in RISK_USED[strategy]:
+                continue  # chiến lược này không dùng tham số đó: bỏ qua (sau khi đã kiểm tra giá trị)
             section[name] = val
     sp = cfg["strategy_params"]
     if sp.get("ma_short", 10) >= sp.get("ma_long", 30):
@@ -164,8 +168,8 @@ def build_grid(body: Dict[str, Any], strategy: str) -> dict:
     for name, vals in grid.items():
         if name not in PARAM_SPECS:
             bad(f"tham số '{name}' không được phép trong grid")
-        if strategy == "B2_goc" and name.removeprefix("risk.") in FULL_ONLY_RISK:
-            bad(f"'{name}' chỉ dùng cho FULL")
+        if name.startswith("risk.") and name.removeprefix("risk.") not in RISK_USED[strategy]:
+            bad(f"'{name}' không dùng cho {strategy}")
         if not isinstance(vals, list) or not vals or len(vals) > MAX_COMBOS:
             bad(f"grid['{name}'] phải là danh sách 1..{MAX_COMBOS} giá trị")
         out[name] = list(dict.fromkeys(num(v, name, *PARAM_SPECS[name]) for v in vals))

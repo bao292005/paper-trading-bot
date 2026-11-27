@@ -4,9 +4,18 @@ const PARAM_DEFS = {
   strategy_params: [["ma_short", "MA ngắn", 10, 1], ["ma_long", "MA dài", 30, 1], ["rsi_period", "RSI period", 14, 1],
                     ["rsi_oversold", "RSI oversold", 30, 1], ["rsi_overbought", "RSI overbought", 70, 1]],
   risk: [["atr_stop_mult", "ATR stop (x)", 2, 0.1], ["take_profit_mult", "Take profit (x ATR)", 3, 0.1],
-         ["risk_per_trade", "Risk / lệnh", 0.01, 0.001]],
+         ["risk_per_trade", "Risk / lệnh", 0.01, 0.001], ["position_pct", "Vốn / lệnh (MA_*)", 0.1, 0.01]],
 };
 const FULL_ONLY = ["atr_stop_mult", "take_profit_mult"];  // B2_goc không có SL/TP theo ATR
+// Tham số risk mà từng chiến lược dùng (khớp RISK_USED ở server)
+const RISK_USED = { B2_goc: ["risk_per_trade"], FULL: ["atr_stop_mult", "take_profit_mult", "risk_per_trade"],
+                    MA_noSLTP: ["position_pct"], MA_RR1: ["position_pct", "atr_stop_mult"] };
+const RISK_NOTE = {
+  B2_goc: "B2_goc chỉ dùng Risk / lệnh (ATR stop, take profit chỉ có ở FULL).",
+  FULL: "",
+  MA_noSLTP: "MA_noSLTP: vào khi MA ngắn cắt lên, thoát khi cắt xuống, KHÔNG SL/TP. Dùng Vốn / lệnh.",
+  MA_RR1: "MA_RR1: cùng điểm vào, thoát CHỈ bằng SL/TP RR 1:1 (SL = TP = ATR stop × ATR14). Dùng Vốn / lệnh + ATR stop.",
+};
 const FORM = { opts: null };
 
 function fieldId(section, key) { return (section === "risk" ? "r-" : "p-") + key; }
@@ -63,12 +72,13 @@ function onSymbolChange(e) {
 
 // B2_goc: tắt ô ATR/TP và cờ thành phần; đặt risk_per_trade mặc định của từng chiến lược
 function applyStrategyUI() {
-  const full = $("s-strategy").value === "FULL";
-  for (const k of FULL_ONLY) $(fieldId("risk", k)).disabled = !full;
+  const strat = $("s-strategy").value, full = strat === "FULL";
+  for (const [k] of PARAM_DEFS.risk) $(fieldId("risk", k)).disabled = !RISK_USED[strat].includes(k);
   document.querySelectorAll("#f-flags input").forEach((c) => { c.disabled = !full; });
   $("flags-card").style.opacity = full ? 1 : 0.5;
-  $("risk-note").textContent = full ? "" : "B2_goc chỉ dùng Risk / lệnh (ATR stop, take profit chỉ có ở FULL).";
+  $("risk-note").textContent = RISK_NOTE[strat];
   $(fieldId("risk", "risk_per_trade")).value = full ? 0.01 : 0.02;
+  if (strat === "MA_RR1") $(fieldId("risk", "atr_stop_mult")).value = 1.5;
 }
 
 function readNumber(id, label) {
@@ -93,7 +103,7 @@ function readSettings() {
                  cost_bps: readNumber("s-cost", "Phí"), strategy_params: {}, risk: {}, flags: {} };
   for (const section of ["strategy_params", "risk"]) {
     for (const [k, label] of PARAM_DEFS[section]) {
-      if (section === "risk" && !full && FULL_ONLY.includes(k)) continue;
+      if (section === "risk" && !RISK_USED[body.strategy].includes(k)) continue;
       body[section][k] = readNumber(fieldId(section, k), label);
     }
   }

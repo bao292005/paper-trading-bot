@@ -13,12 +13,15 @@ import pandas as pd
 
 from ...contracts import OrderIntent
 from ...decision.full_policy import DEFAULT_STRATEGY_PARAMS, make_full_policy_factory
-from ...risk import RiskConfig, legacy_position_size
+from ...risk import RiskConfig, atr, floor_qty, legacy_position_size
 from ..baselines import _fast_ma, _fast_rsi
 
-STRATEGIES = ("B2_goc", "FULL")
+# MA_noSLTP / MA_RR1: CÙNG 1 chỉ báo (MA crossover), cùng sizing -> chỉ khác cách thoát lệnh
+STRATEGIES = ("B2_goc", "FULL", "MA_noSLTP", "MA_RR1")
+MA_SIMPLE = ("MA_noSLTP", "MA_RR1")
 B2_RISK_DEFAULTS = {"risk_per_trade": 0.02, "max_position_size": 1000.0}
 B2_EXTRA_PARAMS = {"min_score": 0.5, "history_days": None}  # None -> tự tính theo ma_long
+MA_RISK_DEFAULTS = {"position_pct": 0.10, "atr_stop_mult": 1.5}  # 10% tiền mặt / lệnh; SL = 1.5 ATR
 
 
 def _check_keys(given: dict, allowed, what: str) -> None:
@@ -80,11 +83,65 @@ def make_b2_params(symbols, strategy_params=None, risk=None, qty_decimals=None):
     return policy
 
 
+def make_ma_simple(symbols, use_sltp: bool, strategy_params=None, risk=None, qty_decimals=None):
+    """Chiến thuật đơn giản cho thí nghiệm so sánh (cùng chỉ báo MA crossover ngắn/dài):
+    - vào lệnh: MA ngắn cắt LÊN MA dài và đang không có vị thế; mua position_pct * tiền mặt.
+    - MA_noSLTP (use_sltp=False): thoát khi MA ngắn cắt XUỐNG. Không SL/TP.
+    - MA_RR1    (use_sltp=True) : thoát CHỈ bằng SL/TP, RR 1:1: SL = giá - k*ATR14, TP = giá + k*ATR14.
+    """
+    _check_keys(strategy_params, DEFAULT_STRATEGY_PARAMS, "strategy_params")
+    _check_keys(risk, MA_RISK_DEFAULTS, "risk (MA)")
+    p = {**DEFAULT_STRATEGY_PARAMS, **(strategy_params or {})}
+    r = {**MA_RISK_DEFAULTS, **(risk or {})}
+    short, long_ = int(p["ma_short"]), int(p["ma_long"])
+    if not 0 < short < long_:
+        raise ValueError(f"cần 0 < ma_short < ma_long, nhận {short}/{long_}")
+    history_days = max(100, math.ceil(1.5 * long_ + 20))
+    symbols = list(symbols)
+
+    def policy(asof, view, pf) -> List[OrderIntent]:
+        orders, cash = [], pf.cash
+        for s in symbols:
+            bars = view.bars(s)
+            if bars.empty or bars.index[-1] != asof:
+                continue
+            data = bars.iloc[bars.index.searchsorted(asof - pd.Timedelta(days=history_days), side="right"):]
+            sig = _fast_ma(data["close"].to_numpy(dtype=float), short, long_)
+            if sig is None:
+                continue
+            action, _, reason = sig
+            held = pf.positions[s].qty if s in pf.positions else 0
+            price = float(data["close"].iloc[-1])
+            if action == "BUY" and held <= 0:
+                raw = r["position_pct"] * cash / price
+                qty = floor_qty(raw, qty_decimals) if qty_decimals is not None else int(raw)
+                if qty <= 0:
+                    continue
+                sl = tp = None
+                if use_sltp:
+                    a = atr(data)
+                    if math.isnan(a) or a <= 0:
+                        continue
+                    dist = r["atr_stop_mult"] * a
+                    sl, tp = price - dist, price + dist  # RR 1:1
+                cash -= qty * price
+                orders.append(OrderIntent(s, "buy", qty, stop_loss=sl, take_profit=tp, reason=reason, asof=asof))
+            elif action == "SELL" and held > 0 and not use_sltp:
+                orders.append(OrderIntent(s, "sell", held, reason=reason, asof=asof))
+        return orders
+    return policy
+
+
 def make_factory(strategy: str, symbols, flags=None, strategy_params=None, risk=None,
                  spy_bars=None, forecasts=None, asset: str = "stock"):
     """policy_factory(train_bars) -> policy, dùng được cho cả single lẫn walk-forward.
     asset="crypto": RiskConfig theo prereg crypto, mua lẻ 6 chữ số."""
     base = RiskConfig.for_asset(asset)
+    if strategy in MA_SIMPLE:
+        if flags:
+            raise ValueError(f"{strategy} không có flags")
+        policy = make_ma_simple(symbols, strategy == "MA_RR1", strategy_params, risk, base.qty_decimals)
+        return lambda train_bars: policy
     if strategy == "B2_goc":
         if flags:
             raise ValueError("B2_goc không có flags")
