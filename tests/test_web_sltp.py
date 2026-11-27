@@ -57,7 +57,9 @@ def mk(tmp_path, monkeypatch):
     def make(**kw):
         fake = FakeTrading(**kw)
         app = create_app(trading_client_fn=lambda: fake, db_path=tmp_path / "t.db",
-                         live_state_path=tmp_path / "state.json", sltp_price_fn=lambda s: (1.0, "mid"))
+                         live_state_path=tmp_path / "state.json",
+                         # giá mid giả = giá vị thế của test (server kiểm "vượt mức" bằng giá của monitor)
+                         sltp_price_fn=lambda s: (float(kw.get("price", 1.0)), "mid"))
         return NS(c=TestClient(app, base_url=HOST), fake=fake, db=tmp_path / "t.db", st=tmp_path / "state.json")
     return make
 
@@ -168,6 +170,17 @@ def test_crypto_ghi_live_state(mk):
     r = e.c.request("DELETE", "/api/sltp", json={"asset": "crypto", "symbol": "BTC/USD", "confirm": "XAC NHAN"},
                     headers=GOOD)
     assert r.status_code == 200 and live.crypto_sltp_entries(e.st) == {}
+
+
+def test_crypto_kiem_vuot_muc_bang_gia_mid_cua_monitor(tmp_path, monkeypatch):
+    """current_price của vị thế (trade cuối) có thể cũ; server phải dùng giá mid của monitor như lúc kích hoạt."""
+    monkeypatch.setattr(sltp_api, "WAIT_SLEEP", 0)
+    fake = FakeTrading(sym="ETHUSD", qty=0.02, price=1677.8)  # trade cuối cũ
+    app = create_app(trading_client_fn=lambda: fake, db_path=tmp_path / "t.db",
+                     live_state_path=tmp_path / "state.json", sltp_price_fn=lambda s: (1667.24, "mid"))
+    e = NS(c=TestClient(app, base_url=HOST), fake=fake, st=tmp_path / "state.json")
+    # TP 1670.57 > mid 1667.24 -> hợp lệ (trước khi sửa: so với 1677.8 -> 409 sai)
+    assert post(e, body(asset="crypto", symbol="ETH/USD", sl=1633.89, tp=1670.57)).status_code == 200
 
 
 def test_crypto_dang_kich_hoat_thi_khong_sua(mk):

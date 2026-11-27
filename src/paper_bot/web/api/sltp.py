@@ -170,7 +170,13 @@ def _set_crypto(request: Request, o: dict, pos, allow_cross: bool) -> dict:
 
     if float(pos.qty) <= 0:
         raise HTTPException(422, "Alpaca không cho bán khống crypto")
-    check_sides("long", o["sl"], o["tp"], num(getattr(pos, "current_price", None)), allow_cross)
+    # Kiểm "đã vượt mức" bằng CÙNG nguồn giá mà monitor dùng để kích hoạt (mid quote). current_price của
+    # vị thế là giá trade cuối, crypto Alpaca ít trade nên có thể cũ/lệch -> chỉ dùng khi không lấy được mid.
+    monitor = getattr(request.app.state, "sltp_monitor", None)
+    price = monitor.price(o["symbol"]) if monitor is not None else None
+    if price is None:
+        price = num(getattr(pos, "current_price", None))
+    check_sides("long", o["sl"], o["tp"], price, allow_cross)
     path = _state_path(request)
     if trigger_active(crypto_sltp_entries(path).get(o["symbol"])):
         raise HTTPException(409, f"{o['symbol']}: SL/TP đang kích hoạt (đang bán), chờ xong rồi thử lại")
