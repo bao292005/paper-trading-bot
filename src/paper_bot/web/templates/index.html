@@ -32,6 +32,9 @@
       <label>Bot <select id="run-select"><option value="">(không hiện)</option></select></label>
     </div>
     <div class="group">
+      <button id="replay-btn" title="Bar Replay: luyện tập trên dữ liệu quá khứ (phím R)">&#9194; Replay</button>
+    </div>
+    <div class="group">
       <label title="Múi giờ hiển thị trên trục thời gian (không đổi dữ liệu)">Giờ <select id="tz-select"></select></label>
     </div>
     <div class="group right">
@@ -55,22 +58,84 @@
         <button id="z-latest" data-z="latest" title="Về hiện tại (phím End)">&rarr;|</button>
         <button id="z-fit" data-z="fit" title="Hiện toàn bộ dữ liệu đã tải">&#10530;</button>
       </div>
+      <div id="replay-bar" class="replay-bar" hidden>
+        <div id="replay-pick">
+          <span>Bấm vào 1 nến để bắt đầu, hoặc nhập ngày giờ (<span id="rp-tz"></span>):</span>
+          <input id="rp-date" placeholder="YYYY-MM-DD HH:MM" size="16" spellcheck="false" autocomplete="off">
+          <button id="rp-go" class="primary">Bắt đầu</button>
+          <button id="rp-cancel" title="Esc">Huỷ</button>
+        </div>
+        <div id="replay-run" hidden>
+          <button id="rp-new" title="Chọn điểm bắt đầu mới (R) — phiên luyện tập hiện tại được lưu">&#9198;</button>
+          <button id="rp-play" title="Chạy / dừng (Space)">&#9654;</button>
+          <button id="rp-step" title="Tiến 1 nến (→). Shift+→ = cuộn biểu đồ">&#9654;|</button>
+          <button id="rp-speed" title="Tốc độ chạy (nến / giây)">1x</button>
+          <span class="rp-clock">Replay: <b id="rp-time">-</b></span>
+          <button id="rp-exit" title="Thoát replay (kết thúc + lưu phiên luyện tập)">&#9197; Thoát</button>
+        </div>
+        <div id="rp-holdout" class="rp-holdout small">Luyện tập trên dữ liệu ≥ 2025 sẽ 'nhìn thấy' giai đoạn holdout. Không ảnh hưởng gì tới bot, nhưng đừng dùng kết quả luyện tập để chỉnh bot.</div>
+      </div>
     </section>
 
-    <aside id="side">
-      <section class="card">
+    <aside id="side" data-tab="account">
+      <div id="side-tabs" class="side-tabs">
+        <button data-tab="account" class="active">Tài khoản</button><button data-tab="stats">Thống kê</button>
+      </div>
+      <section class="card practice practice-only tab-account">
+        <h3>Tài khoản luyện tập <span class="badge warn">GIẢ LẬP</span></h3>
+        <div id="pr-account" class="muted">Chưa có phiên</div>
+        <div id="pr-notes" class="small err"></div>
+      </section>
+      <section class="card practice practice-only tab-account">
+        <h3>Vị thế luyện tập</h3>
+        <div id="pr-position" class="muted">Không có vị thế</div>
+      </section>
+      <section class="card practice practice-only tab-account">
+        <h3>Lệnh chờ luyện tập <span class="small muted">(kéo đường giá trên chart để sửa)</span></h3>
+        <div id="pr-orders" class="muted">Không có lệnh chờ</div>
+      </section>
+      <section class="card practice practice-only tab-account">
+        <h3>Đặt lệnh luyện tập</h3>
+        <form id="pr-form" autocomplete="off">
+          <div class="form-grid">
+            <label>Hướng <select id="pr-side"><option value="buy">Mua</option><option value="sell">Bán</option></select></label>
+            <label>Loại <select id="pr-type"><option value="market">Market</option><option value="limit">Limit</option><option value="stop">Stop</option></select></label>
+            <label>Số lượng <input id="pr-qty" type="number" min="0" step="any" value="10" required></label>
+            <label>Giá <input id="pr-price" type="number" min="0" step="any" placeholder="limit/stop"></label>
+            <label>Stop loss <input id="pr-sl" type="number" min="0" step="any" placeholder="tuỳ chọn"></label>
+            <label>Take profit <input id="pr-tp" type="number" min="0" step="any" placeholder="tuỳ chọn"></label>
+          </div>
+          <div class="bot-buttons">
+            <button type="submit" id="pr-submit" class="primary">Đặt lệnh</button>
+            <button type="button" id="pr-close" class="danger">Đóng vị thế</button>
+          </div>
+          <div class="small muted">Phím: B = mua market, S = bán/đóng (số lượng ở ô trên). Không bán khống. Không gửi gì lên Alpaca.</div>
+          <div id="pr-msg" class="small muted"></div>
+        </form>
+      </section>
+      <section class="card tab-stats">
+        <h3>Thống kê luyện tập <span id="pr-stats-title" class="small muted"></span></h3>
+        <div id="pr-eq-chart" class="eq-chart"></div>
+        <div id="pr-report" class="muted small">Chưa có phiên luyện tập</div>
+        <div id="pr-trades" class="small"></div>
+      </section>
+      <section class="card tab-stats">
+        <h3>Phiên đã lưu</h3>
+        <div id="pr-history" class="muted small">Đang tải…</div>
+      </section>
+      <section class="card real-only tab-account">
         <h3>Tài khoản (paper)</h3>
         <div id="account" class="muted">Đang tải…</div>
       </section>
-      <section class="card">
+      <section class="card real-only tab-account">
         <h3>Vị thế</h3>
         <div id="positions" class="muted">Đang tải…</div>
       </section>
-      <section class="card">
+      <section class="card real-only tab-account">
         <h3>Lệnh chờ</h3>
         <div id="orders" class="muted">Đang tải…</div>
       </section>
-      <section class="card">
+      <section class="card real-only tab-account">
         <h3>Đặt lệnh thủ công (paper)</h3>
         <form id="order-form" autocomplete="off">
           <div class="form-grid">
@@ -88,7 +153,7 @@
           <div id="ord-msg" class="small muted"></div>
         </form>
       </section>
-      <section class="card">
+      <section class="card real-only tab-account">
         <h3>Bot</h3>
         <label class="small muted">Mã (cách nhau bằng dấu cách)
           <input id="bot-symbols" value="AAPL NVDA JPM" spellcheck="false" style="width:100%"></label>
@@ -98,7 +163,7 @@
         </div>
         <pre id="bot-output" hidden></pre>
       </section>
-      <div class="muted small" id="refresh-note">Tự làm mới mỗi 15 giây</div>
+      <div class="muted small real-only tab-account" id="refresh-note">Tự làm mới mỗi 15 giây</div>
     </aside>
   </main>
 
@@ -129,6 +194,13 @@
   <script src="/static/js/modal.js"></script>
   <script src="/static/js/orders.js"></script>
   <script src="/static/js/botrun.js"></script>
+  <script src="/static/js/replay_math.js"></script>
+  <script src="/static/js/replay_data.js"></script>
+  <script src="/static/js/replay.js"></script>
+  <script src="/static/js/practice.js"></script>
+  <script src="/static/js/practice_orders.js"></script>
+  <script src="/static/js/practice_drag.js"></script>
+  <script src="/static/js/practice_stats.js"></script>
   <script src="/static/js/main.js"></script>
 </body>
 </html>

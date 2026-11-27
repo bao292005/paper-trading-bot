@@ -65,6 +65,20 @@ uv run paper-bot once --asset crypto --exchange-stop      # thêm stop-limit bá
   `/tester`: ô chọn loại tài sản (dev 2022–2024, tối đa 2024-12-31, phí 25 bps, IS 2022–2023 / OOS 2024). UI Streamlit trang "Điều khiển" có ô chọn tương tự.
 - Cảnh báo: equity/cash lấy theo tài khoản chung (gồm cổ phiếu đang giữ); cấu hình crypto cũng chưa chạy holdout. Chi tiết: [docs/cai-tien/CRYPTO-LIVE.md](docs/cai-tien/CRYPTO-LIVE.md).
 
+## Bar Replay + tài khoản luyện tập (web `/`)
+Tua lại biểu đồ như TradingView Bar Replay và giao dịch giả lập trên dữ liệu quá khứ. **Lệnh luyện tập KHÔNG BAO GIỜ gửi lên Alpaca**
+(khớp ở server bằng nến 1m, chỉ dùng dữ liệu trước con trỏ).
+- Bấm **Replay** (hoặc `R`), rồi bấm vào một nến hoặc gõ ngày/giờ (theo múi giờ đang chọn, `YYYY-MM-DD` hoặc `YYYY-MM-DD HH:MM`) và bấm Bắt đầu.
+- Thanh điều khiển: ⏮ chọn lại điểm bắt đầu (= phiên mới), ▶/⏸, ▶| tiến 1 nến, tốc độ 0.5x/1x/3x/10x (nến/giây), ⏭ thoát.
+  Đổi khung 1m…1D vẫn cắt đúng con trỏ, nến khung lớn đang hình thành chỉ gộp từ nến 1m trước con trỏ. Realtime tạm dừng khi replay.
+- Phím tắt: `R` chọn điểm bắt đầu · `→` tiến 1 nến · `Shift+→` cuộn biểu đồ · `Space` chạy/dừng · `Esc` huỷ chọn ·
+  `B` mua market · `S` bán (đóng vị thế hoặc bán số ở ô Qty). Phím không chạy khi đang gõ trong ô nhập.
+- Panel phải đổi thành **Tài khoản luyện tập** (100.000$, phí 10 bps cổ phiếu / 25 bps crypto, không bán khống): form market/limit/stop kèm SL/TP,
+  kéo đường SL/TP/limit trên biểu đồ để sửa giá, mũi tên tại điểm khớp. Tab **Thống kê**: chỉ số kiểu MT5, equity, bảng lệnh, phiên cũ.
+- Thoát / chọn điểm mới / đổi mã: phiên có lệnh khớp được lưu DB với run_id `practice-<id>` (xem lại ở tab Thống kê hoặc ô "Bot").
+- Luyện tập trên dữ liệu ≥ 2025 sẽ "nhìn thấy" giai đoạn holdout: không ảnh hưởng bot, nhưng đừng dùng kết quả luyện tập để chỉnh bot.
+  Chi tiết: [docs/cai-tien/REPLAY.md](docs/cai-tien/REPLAY.md).
+
 ## Giao diện (UI Streamlit)
 ```bash
 uv run streamlit run src/paper_bot/ui/app.py

@@ -22,6 +22,7 @@ function showServerStatus(msg) {
 
 // Nến đang chạy từ server: thay nến cuối hoặc thêm nến mới
 function applyLiveBar(m) {
+  if (typeof RP !== "undefined" && RP.on) return;  // replay: không nhận nến realtime
   if (m.symbol !== CH.symbol || m.tf !== CH.tf || (m.asset || "stock") !== CH.asset) return;
   const last = D.bars[D.bars.length - 1];
   if (last && m.time < last.time) return;
@@ -35,7 +36,17 @@ function applyLiveBar(m) {
   refreshLegend();
 }
 
+// Replay: tạm dừng realtime (đóng WS), thoát replay thì nối lại
+function pauseLive() {
+  clearTimeout(LIVE.timer);
+  if (LIVE.ws) { LIVE.closing = true; LIVE.ws.close(); LIVE.ws = null; }
+  setLiveBadge("tạm dừng (replay)", "warn");
+}
+
+function resumeLive() { connectLive(); }
+
 function connectLive() {
+  if (typeof RP !== "undefined" && RP.on) return;  // đang replay: không nối realtime
   clearTimeout(LIVE.timer);
   if (LIVE.ws) { LIVE.closing = true; LIVE.ws.close(); }
   const proto = location.protocol === "https:" ? "wss" : "ws";
@@ -59,6 +70,7 @@ function connectLive() {
 
 // Đổi mã/khung: gửi yêu cầu trên cùng kết nối (server hỗ trợ), nếu chưa mở thì nối lại
 function switchLive() {
+  if (typeof RP !== "undefined" && RP.on) return;
   if (LIVE.ws && LIVE.ws.readyState === WebSocket.OPEN) {
     LIVE.ws.send(JSON.stringify({ symbol: CH.symbol, tf: CH.tf, asset: CH.asset }));
   } else {

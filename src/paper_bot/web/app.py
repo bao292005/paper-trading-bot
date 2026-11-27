@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .. import dashboard
 from ..data.intraday import load_intraday
-from .api import live, markers, market, orders, tester, trading
+from .api import live, markers, market, orders, practice, replay, tester, trading
 from .hub import LiveHub, ny_now, utc_now
 from .jobs import JobManager
 
@@ -48,7 +48,7 @@ def create_app(load_intraday_fn=None, trading_client_fn=None, db_path=None,
     state.live_hub = LiveHub(adapter_factory or live.make_stream_adapter, seed_fn or default_seed,
                              crypto_adapter_factory=crypto_factory, crypto_seed_fn=crypto_seed_fn or default_crypto_seed)
 
-    for module in (market, trading, orders, markers, live, tester):
+    for module in (market, trading, orders, markers, live, tester, replay, practice):
         app.include_router(module.router)
 
     @app.get("/", include_in_schema=False)

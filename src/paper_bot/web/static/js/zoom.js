@@ -64,6 +64,7 @@ function attachZoom(chart, series, el, opts) {
     const t = ev.target, tag = t && t.tagName;
     if (ev.ctrlKey || ev.metaKey || ev.altKey || tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
     if (t && t.isContentEditable) return;
+    if (ev.key === "ArrowRight" && !ev.shiftKey && opts.rightKeyTaken && opts.rightKeyTaken()) return;  // replay: → = step
     const fn = keys[ev.key.length === 1 ? ev.key.toLowerCase() : ev.key];
     if (fn && isActive() && (fn() !== false || ev.key !== "Escape")) ev.preventDefault();
   });

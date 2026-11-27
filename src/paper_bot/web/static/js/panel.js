@@ -49,6 +49,7 @@ async function refreshOrders() {
 
 // Price line cho mã đang xem: giá vào (xanh dương), SL (đỏ), TP (xanh lá), lệnh chờ khác (cam)
 function updatePriceLines() {
+  if (typeof RP !== "undefined" && RP.on) { practiceRefreshChart(); return; }  // replay: đường giá của tài khoản luyện tập
   const items = [];
   const pos = PANEL.positions.find((p) => p.symbol === CH.symbol);
   if (pos) items.push({ price: pos.avg_entry_price, color: "#2196f3", title: `Vào ${fmt.qty(pos.qty)}` });

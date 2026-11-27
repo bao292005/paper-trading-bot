@@ -26,6 +26,7 @@ function selectSymbol(raw, asset) {
     document.getElementById("symbol-input").value = CH.symbol;
     return;
   }
+  replayExit();  // tài khoản luyện tập gắn với 1 mã: đổi mã = kết thúc replay (phiên được lưu)
   CH.symbol = sym;
   document.getElementById("symbol-input").value = sym;
   reload();
@@ -50,6 +51,7 @@ async function loadSymbols() {
 
 // Đổi Stock <-> Crypto: mỗi loại có danh sách mã riêng, form lệnh/bot riêng (múi giờ hiển thị giữ theo #tz-select)
 function changeAsset(asset, wantedSymbol) {
+  replayExit();
   CH.asset = asset;
   document.getElementById("asset-select").value = asset;
   const sym = normalizeSymbol(wantedSymbol, asset) || (asset === "crypto" ? CRYPTO_SYMBOLS[0] : "AAPL");
@@ -86,7 +88,8 @@ function bindToolbar() {
 window.addEventListener("DOMContentLoaded", () => {
   CH.symbol = document.getElementById("symbol-input").value.trim().toUpperCase() || "AAPL";
   initChart(document.getElementById("chart"));
-  CH.zoom = attachZoom(CH.chart, CH.candles, document.getElementById("chart"), { bar: document.getElementById("zoombar") });
+  CH.zoom = attachZoom(CH.chart, CH.candles, document.getElementById("chart"), { bar: document.getElementById("zoombar"),
+                                                                         rightKeyTaken: () => RP.on });
   setRsiVisible(document.getElementById("chk-rsi").checked);
   initLegend();
   watchOlderLoading();
@@ -98,4 +101,6 @@ window.addEventListener("DOMContentLoaded", () => {
   initPanel();
   initOrderUI();
   initBotUI();
+  initReplay();
+  initPractice();
 });

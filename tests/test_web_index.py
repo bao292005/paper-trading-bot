@@ -13,7 +13,13 @@ MAIN_IDS = ["symbol-input", "tf-buttons", "chk-ma10", "chk-ma30", "chk-ma200", "
             "order-form", "ord-symbol", "ord-side", "ord-type", "ord-qty", "ord-limit", "ord-sl", "ord-tp", "ord-msg",
             "modal", "modal-input", "modal-ok", "modal-cancel", "bot-symbols", "bot-dry", "bot-real", "bot-output",
             # crypto: chọn loại tài sản, giá stop, ghi chú SL/TP do bot tự quản
-            "asset-select", "ord-stop", "ord-note"]
+            "asset-select", "ord-stop", "ord-note",
+            # bar replay + tài khoản luyện tập
+            "replay-btn", "replay-bar", "replay-pick", "replay-run", "rp-tz", "rp-date", "rp-go", "rp-cancel",
+            "rp-new", "rp-play", "rp-step", "rp-speed", "rp-time", "rp-exit", "rp-holdout", "side", "side-tabs",
+            "pr-account", "pr-notes", "pr-position", "pr-orders", "pr-form", "pr-side", "pr-type", "pr-qty",
+            "pr-price", "pr-sl", "pr-tp", "pr-submit", "pr-close", "pr-msg",
+            "pr-stats-title", "pr-eq-chart", "pr-report", "pr-trades", "pr-history"]
 
 
 @pytest.fixture

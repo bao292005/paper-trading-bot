@@ -22,6 +22,7 @@ function applyAll() {
 // Tải mới hoàn toàn khi đổi mã / khung. keepRange = true (đổi khung): giữ cùng khoảng THỜI GIAN đang xem;
 // false (lần đầu / đổi mã): hiện ~150 nến gần nhất
 async function loadAll(keepRange) {
+  if (typeof RP !== "undefined" && RP.on) { await replayLoadAll(keepRange); return; }  // replay: cắt tại con trỏ
   const seq = ++D.seq;
   if (keepRange && CH.zoom) CH.zoom.saveRange();
   D.bars = []; D.volume = []; D.ind = {}; D.oldest = null; D.exhausted = false;
@@ -42,6 +43,7 @@ async function loadAll(keepRange) {
 
 // Kéo sát mép trái -> tải đoạn cũ hơn và nối vào đầu, giữ nguyên vị trí đang xem
 async function loadOlder() {
+  if (typeof RP !== "undefined" && RP.on) return replayLoadOlder();
   if (D.loading || D.exhausted || D.oldest === null) return;
   D.loading = true;
   const seq = D.seq;
@@ -69,6 +71,7 @@ async function loadOlder() {
 }
 
 async function loadMarkers() {
+  if (typeof RP !== "undefined" && RP.on) { practiceRefreshChart(); return; }  // replay: chỉ hiện lệnh luyện tập
   if (!D.runId) { setMarkers([]); return; }
   try {
     const m = await getJSON("/api/markers", { symbol: CH.symbol, run_id: D.runId, tf: CH.tf, asset: CH.asset });
