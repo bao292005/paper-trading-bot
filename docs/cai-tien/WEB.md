@@ -1,5 +1,45 @@
 # Nhật ký web app (agent j-web)
 
+## Realtime v2 (agent j-rt, 2026-11-27)
+Bối cảnh: log server có 78 lần "connection limit exceeded"; nến chỉ nhảy theo phút (chỉ có bars).
+### Bước 1-2 – Hub bền + trades + throttle
+- `web/hub.py`: 1 stream sống lâu/loại tài sản. Hết người xem -> chờ `grace` (server: `GRACE_SECONDS`=300s
+  trong `app.py`; lớp mặc định 0 để test cũ giữ hành vi đóng ngay). Lỗi -> `_dispose()` (chờ `adapter.stop()`
+  đóng socket) RỒI mới tạo stream mới. "connection limit exceeded" -> trạng thái `limit`, chờ 30→60→…→300s,
+  status có `retry_in` + câu "Alpaca đang giữ kết nối cũ, thử lại sau Xs". Shutdown: huỷ task trước, đóng sau.
+- Trades: `_on_trade` dựng phút đang chạy (h/l/c, vol += size), bar chính thức (`final`) thắng trade.
+  `candle()` cache phần gộp các phút trước phút cuối -> mỗi tick O(1), không sort lại dict. Trade chỉ
+  đánh dấu `_dirty`, `_flush_loop` đẩy mỗi 0.25s (≤4 tin/s/client); bar đẩy ngay. Tin "bar" thêm `ts`
+  (unix giây trade cuối) để client đo độ trễ. Stock ngoài phiên chính: bỏ trade như bỏ bar.
+- `api/live.py`: adapter KHÔNG dùng `_run_forever()` (hàm đó tự nuốt lỗi limit và tự thử lại 1-30s, chính
+  là nguồn 78 lần lỗi) mà chạy 1 phiên `_start_ws/_send_subscribe_msg/_consume`, lỗi thì raise; `stop()`
+  gọi `stream.stop()` + `await stream.close()` + chờ phiên kết thúc. Subscribe thêm trades.
+- `_send` lỗi không còn xoá client khỏi `clients` (trước đây làm `refs` lệch -> mã không bao giờ unsubscribe).
+- Test: `tests/test_web_rt.py` 9 test (grace, hết grace, limit backoff + dọn stream, trade/bar, ngoài giờ,
+  throttle, flush loop, shutdown, adapter thật không mạng). test_web_live/crypto cũ giữ nguyên, pass.
+### Bước 3 – Frontend
+- File mới `static/js/indicators_live.js` (`IL`): MA10/30/200 + RSI14 (kiểu SMA như `rsi_series`) của NẾN CUỐI
+  từ ~201 giá đóng cửa cuối -> mỗi tick O(200). `upsertLast` thay điểm cùng time / thêm time mới.
+- `live.js` viết lại: mỗi tin "bar" -> `series.update()` nến + volume + MA/RSI điểm cuối + `refreshLegend()`.
+  Badge: "Realtime ● (độ trễ Xs)" xanh (độ trễ = giờ máy − `ts` trade cuối); vàng khi stream `limit`/`reconnecting`
+  (kèm lý do + đếm ngược), đóng cửa, đang poll; đỏ "mất kết nối, thử lại sau Xs". WS im lặng > 20s khi thị trường
+  mở (crypto luôn mở) -> poll `/api/bars` (3 nến cuối) mỗi 10s, có tin WS lại thì ngừng; hổng lớn -> `loadAll`.
+  Nối lại 1→2→…→15s. Tab hiện lại: nối ngay nếu WS đã đóng + tải bù. Replay: bỏ tin realtime, dừng poll.
+- Test: `tests/test_web_rt_js.py` 5 test node (chỉ báo khớp pandas ở mọi vị trí, nến cùng time/mới/cũ/mã khác/
+  replay, poll dự phòng bật/tắt, badge vàng/đỏ). `node --check` OK; 255 test web pass.
+### Bước 4 – REST gần hiện tại + chạy thật + README
+- `data/sources.py`: `feed_order(end, now)`: end trong 15 phút gần nhất (hoặc tương lai) -> chỉ IEX (SIP free chắc
+  chắn lỗi), ngược lại SIP rồi IEX. Dùng ở `fetch_minute_bars` (nhận thêm `now`, `_ensure_month` truyền vào) và
+  `AlpacaDataManager._fetch_api`. Cache lịch sử không đổi. Test: 2 test mới trong `test_data_intraday.py`.
+- Chạy thật adapter `AlpacaStreamAdapter` crypto (không đụng server 8600, không bị limit): subscribe OK
+  (trades+bars+updatedBars). BTC/USD 20s: 0 trade; 4 mã 75s: 3 trade, bar phút trade_count 0 -> sàn crypto Alpaca rất thưa.
+  Độ trễ trade -> máy: ~0.06s (âm nhẹ do lệch đồng hồ, coi như ≈ 0s).
+- Hệ quả và sửa: heartbeat server 30s -> 10s (`HEARTBEAT_SECONDS` trong `app.py`); client coi tin status "connected"
+  là WS còn sống (không bật poll vô ích); độ trễ đo lúc nhận trade mới, không tăng dần khi không có trade. +1 test node.
+- README: mục "Realtime trên web" (1 stream/loại/key: không chạy 2 server, không chạy script khác dùng stream cùng key).
+- Còn lại: `stop()` làm `_consume` raise ConnectionClosedOK (vô hại, hub đã huỷ task trước khi dispose); chưa thử trên
+  trình duyệt thật / giờ mở cửa cổ phiếu.
+
 ## Zoom biểu đồ (agent j-zoom, 2026-11-27)
 - File mới (`static/js/`, mỗi file ≤ 150 dòng): `zoom_math.js` (hàm thuần: zoom factor, cuộn, toạ độ chọn → range, giữ range khi prepend,
   đổi khung theo thời gian), `pricescale.js` (Thường/Log/% + Auto + giá thủ công, nhớ chế độ ở localStorage `paperbot.priceMode`),

@@ -18,6 +18,18 @@ from .cache import COLUMNS, load_bars, normalize_bars
 
 logger = logging.getLogger("paper_bot")
 
+SIP_DELAY = pd.Timedelta(minutes=15)  # gói free: SIP từ chối truy vấn có end trong 15 phút gần nhất
+
+
+def feed_order(end, now=None) -> tuple:
+    """Thứ tự thử feed: end trong 15 phút gần nhất (hoặc tương lai) -> chỉ IEX (SIP chắc chắn lỗi);
+    ngược lại SIP trước, lỗi thì IEX. end/now: Timestamp có tz, hoặc naive = UTC."""
+    def utc(t):
+        t = pd.Timestamp(t)
+        return t.tz_localize("UTC") if t.tzinfo is None else t.tz_convert("UTC")
+    now = utc(now) if now is not None else pd.Timestamp.now(tz="UTC")
+    return (DataFeed.IEX,) if utc(end) > now - SIP_DELAY else (DataFeed.SIP, DataFeed.IEX)
+
 
 def fetch_daily_bars(
     client: StockHistoricalDataClient,
@@ -92,7 +104,7 @@ class AlpacaDataManager(DataManager):
         return self._fetch_api(symbol, start, end)
 
     def _fetch_api(self, symbol: str, start: pd.Timestamp, end: pd.Timestamp) -> pd.DataFrame:
-        for feed in (DataFeed.SIP, DataFeed.IEX):
+        for feed in feed_order(end + pd.Timedelta(days=1)):
             try:
                 # end + 1 ngày để API trả đủ nến ngày `end`, rồi cắt lại bên dưới
                 df = fetch_daily_bars(self.client, [symbol], start.to_pydatetime(),

@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
@@ -12,13 +13,20 @@ from .security import origin_ok
 from .timeutil import SYMBOL_RE
 
 router = APIRouter()
+logger = logging.getLogger("paper_bot")
 
 
 class AlpacaStreamAdapter:
-    """Bọc StockDataStream (feed IEX, gói miễn phí). Subscribe qua thread riêng vì alpaca-py
-    gửi lệnh subscribe bằng run_coroutine_threadsafe(...).result() (gọi trên event loop sẽ treo)."""
+    """Bọc StockDataStream (feed IEX, gói miễn phí) / CryptoDataStream: trades + bars + updatedBars.
+
+    - Subscribe qua thread riêng vì alpaca-py gửi lệnh subscribe bằng run_coroutine_threadsafe(...).result()
+      (gọi thẳng trên event loop sẽ treo).
+    - run() chạy MỘT phiên kết nối và raise khi lỗi. KHÔNG dùng _run_forever(): hàm đó tự nuốt lỗi
+      "connection limit exceeded" và tự thử lại mỗi 1-30s -> hub không biết để chờ lâu hơn / báo UI.
+    - stop() chờ socket đóng hẳn (close handshake) để nhả slot kết nối duy nhất của gói miễn phí."""
 
     def __init__(self, api_key: str, api_secret: str, asset: str = "stock"):
+        self._done = None  # Event: phiên run() hiện tại đã kết thúc hẳn
         if asset == "crypto":  # crypto 24/7, feed mặc định (US)
             from alpaca.data.live import CryptoDataStream
 
@@ -35,19 +43,52 @@ class AlpacaStreamAdapter:
 
     async def subscribe(self, handler, symbols) -> None:
         if symbols:
-            await asyncio.to_thread(self._stream.subscribe_bars, handler, *symbols)
-            await asyncio.to_thread(self._stream.subscribe_updated_bars, handler, *symbols)
+            s = self._stream
+            for fn in (s.subscribe_trades, s.subscribe_bars, s.subscribe_updated_bars):
+                await asyncio.to_thread(fn, handler, *symbols)
 
     async def unsubscribe(self, symbols) -> None:
         if symbols:
-            await asyncio.to_thread(self._stream.unsubscribe_bars, *symbols)
-            await asyncio.to_thread(self._stream.unsubscribe_updated_bars, *symbols)
+            s = self._stream
+            for fn in (s.unsubscribe_trades, s.unsubscribe_bars, s.unsubscribe_updated_bars):
+                try:
+                    await asyncio.to_thread(fn, *symbols)
+                except KeyError:  # mã chưa subscribe kênh này
+                    pass
 
     async def run(self) -> None:
-        await self._stream._run_forever()  # chạy tới khi stop() hoặc lỗi
+        """Một phiên: kết nối + xác thực + subscribe rồi nhận dữ liệu tới khi stop() / mất kết nối (raise)."""
+        s = self._stream
+        run = s._reserve_run()  # trạng thái dừng của phiên (API nội bộ alpaca-py, xem websocket.py)
+        run.loop = s._loop = asyncio.get_running_loop()
+        self._done = asyncio.Event()
+        try:
+            await s._start_ws()  # lỗi bắt tay/limit -> raise ra hub
+            await s._send_subscribe_msg()
+            s._running = True
+            await s._consume(run)  # trả về khi stop(); mất kết nối thì raise
+        finally:
+            await self._close_socket()  # luôn đóng socket (kể cả socket mở dở khi bắt tay lỗi)
+            if s._run is run:
+                s._run = None
+            self._done.set()
+
+    async def _close_socket(self) -> None:
+        try:
+            await asyncio.wait_for(self._stream.close(), 10)  # close() của alpaca-py chờ bắt tay đóng
+        except Exception as e:
+            logger.warning(f"đóng socket stream lỗi: {e}")
+            self._stream._ws, self._stream._running = None, False
 
     async def stop(self) -> None:
-        self._stream.stop()  # không chặn, gọi từ event loop được
+        """Dừng và CHỜ socket đóng hẳn rồi mới trả về (để hub tạo stream mới không đụng limit)."""
+        self._stream.stop()
+        await self._close_socket()
+        if self._done is not None and not self._done.is_set():
+            try:
+                await asyncio.wait_for(self._done.wait(), 10)
+            except asyncio.TimeoutError:
+                logger.warning("phiên stream chưa kết thúc sau 10s")
 
 
 def _make_adapter(asset: str) -> AlpacaStreamAdapter:

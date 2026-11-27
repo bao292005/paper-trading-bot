@@ -14,6 +14,9 @@ from .hub import LiveHub, ny_now, utc_now
 from .jobs import JobManager
 
 WEB_DIR = Path(__file__).resolve().parent
+GRACE_SECONDS = 300.0  # hết người xem thì giữ stream Alpaca thêm 5 phút (tải lại trang không mở kết nối mới)
+# Tin trạng thái định kỳ < 20s: crypto trên Alpaca có khi cả phút không có trade, client vẫn biết WS còn sống
+HEARTBEAT_SECONDS = 10.0
 
 
 def create_app(load_intraday_fn=None, trading_client_fn=None, db_path=None,
@@ -45,8 +48,10 @@ def create_app(load_intraday_fn=None, trading_client_fn=None, db_path=None,
 
     # test đưa adapter giả vào thì dùng luôn bản giả đó cho crypto (không mở kết nối thật)
     crypto_factory = crypto_adapter_factory or (adapter_factory or live.make_crypto_stream_adapter)
+    # 1 server = 1 hub = tối đa 1 stream cổ phiếu + 1 stream crypto, sống suốt vòng đời server
     state.live_hub = LiveHub(adapter_factory or live.make_stream_adapter, seed_fn or default_seed,
-                             crypto_adapter_factory=crypto_factory, crypto_seed_fn=crypto_seed_fn or default_crypto_seed)
+                             crypto_adapter_factory=crypto_factory, crypto_seed_fn=crypto_seed_fn or default_crypto_seed,
+                             grace=GRACE_SECONDS, heartbeat=HEARTBEAT_SECONDS)
 
     for module in (market, trading, orders, markers, live, tester, replay, practice):
         app.include_router(module.router)

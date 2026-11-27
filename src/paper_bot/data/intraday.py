@@ -74,16 +74,20 @@ def _to_ny_naive(df: pd.DataFrame, tz: str = NY) -> pd.DataFrame:
     return out[~out.index.duplicated(keep="last")].sort_index()
 
 
-def fetch_minute_bars(client, symbol: str, start: pd.Timestamp, end: pd.Timestamp) -> Optional[pd.DataFrame]:
+def fetch_minute_bars(client, symbol: str, start: pd.Timestamp, end: pd.Timestamp,
+                      now: Optional[pd.Timestamp] = None) -> Optional[pd.DataFrame]:
     """Tải nến phút [start, end] (giờ NY naive) từ Alpaca: thử SIP trước, lỗi thì IEX.
+    end trong 15 phút gần nhất (so với `now` giờ NY naive, mặc định giờ thật) -> chỉ IEX (SIP free chắc chắn lỗi).
 
-    Trả None nếu cả hai feed đều lỗi (khác với DataFrame rỗng = không có dữ liệu).
+    Trả None nếu các feed đều lỗi (khác với DataFrame rỗng = không có dữ liệu).
     """
-    from alpaca.data.enums import Adjustment, DataFeed
+    from alpaca.data.enums import Adjustment
     from alpaca.data.requests import StockBarsRequest
     from alpaca.data.timeframe import TimeFrame
 
-    for feed in (DataFeed.SIP, DataFeed.IEX):
+    from .sources import feed_order
+
+    for feed in feed_order(end.tz_localize(NY), None if now is None else now.tz_localize(NY)):
         try:
             request = StockBarsRequest(
                 symbol_or_symbols=symbol, timeframe=TimeFrame.Minute,
@@ -145,8 +149,10 @@ def _ensure_month(symbol, period, client_fn, minute_dir, now, asset="stock") -> 
         return cached
     start = period.start_time if cached is None or cached.empty else cached.index[-1] + pd.Timedelta(minutes=1)
     end = min(period.end_time.normalize() + pd.Timedelta(days=1), now)
-    fetch = fetch_crypto_minute_bars if asset == "crypto" else fetch_minute_bars
-    new = fetch(client_fn(), symbol, start, end)
+    if asset == "crypto":
+        new = fetch_crypto_minute_bars(client_fn(), symbol, start, end)
+    else:
+        new = fetch_minute_bars(client_fn(), symbol, start, end, now=now)
     if new is None:  # lỗi mạng/key: dùng tạm cache cũ, không ghi gì
         return cached if cached is not None else _empty()
     df = new if cached is None else pd.concat([cached, new])

@@ -65,6 +65,14 @@ uv run paper-bot once --asset crypto --exchange-stop      # thêm stop-limit bá
   `/tester`: ô chọn loại tài sản (dev 2022–2024, tối đa 2024-12-31, phí 25 bps, IS 2022–2023 / OOS 2024). UI Streamlit trang "Điều khiển" có ô chọn tương tự.
 - Cảnh báo: equity/cash lấy theo tài khoản chung (gồm cổ phiếu đang giữ); cấu hình crypto cũng chưa chạy holdout. Chi tiết: [docs/cai-tien/CRYPTO-LIVE.md](docs/cai-tien/CRYPTO-LIVE.md).
 
+## Realtime trên web `/`
+- Nến cuối nhảy theo từng giao dịch (trades, gộp ≤ 4 tin/giây), MA/RSI/legend cập nhật ngay; badge "Realtime ● (độ trễ Xs)".
+  WS im lặng > 20s khi thị trường mở -> tự lấy REST mỗi 10s; tab hiện lại -> nối lại + tải bù.
+- Gói free của Alpaca chỉ cho **1 kết nối stream mỗi loại (cổ phiếu / crypto) trên mỗi key**. Server giữ 1 stream sống lâu
+  (hết người xem thì giữ thêm 5 phút). **Không chạy 2 server web cùng lúc, và không chạy script/bot khác dùng stream với cùng key**,
+  nếu không Alpaca trả "connection limit exceeded" (badge vàng: "Alpaca đang giữ kết nối cũ, thử lại sau Xs", chờ 30s→5 phút).
+- Crypto trên sàn Alpaca giao dịch thưa (có phút không có trade nào) nên nến crypto có thể đứng yên vài chục giây, đó là bình thường.
+
 ## Bar Replay + tài khoản luyện tập (web `/`)
 Tua lại biểu đồ như TradingView Bar Replay và giao dịch giả lập trên dữ liệu quá khứ. **Lệnh luyện tập KHÔNG BAO GIỜ gửi lên Alpaca**
 (khớp ở server bằng nến 1m, chỉ dùng dữ liệu trước con trỏ).

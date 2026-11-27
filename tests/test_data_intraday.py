@@ -148,3 +148,22 @@ def test_1d_doc_tu_cache_ngay(tmp_path):
 def test_tf_la_bao_loi():
     with pytest.raises(ValueError):
         load_intraday("AAA", "2m", "2024-03-01", "2024-03-02")
+
+
+def test_end_trong_15_phut_gan_nhat_chi_goi_iex(tmp_path):
+    # Giữa phiên: end = now -> SIP free chắc chắn lỗi, nên đi thẳng IEX (không thử SIP)
+    client = FakeClient(make_raw(["2024-03-04"]))
+    df = load_intraday("AAA", "1m", "2024-03-04", "2024-03-04", client=client,
+                       minute_dir=tmp_path, now="2024-03-04 10:00")
+    assert [c.feed.value for c in client.calls] == ["iex"]
+    assert df.index[-1] == pd.Timestamp("2024-03-04 10:00")
+
+
+def test_feed_order_theo_moc_15_phut():
+    from paper_bot.data.sources import feed_order
+    now = pd.Timestamp("2024-03-04 15:00", tz="UTC")
+    names = lambda end: [f.value for f in feed_order(end, now)]  # noqa: E731
+    assert names(pd.Timestamp("2024-03-04 14:44", tz="UTC")) == ["sip", "iex"]
+    assert names(pd.Timestamp("2024-03-04 14:46", tz="UTC")) == ["iex"]
+    assert names(pd.Timestamp("2024-03-05")) == ["iex"]  # naive = UTC, tương lai
+    assert names(pd.Timestamp("2024-03-04 10:00", tz=NY)) == ["iex"]  # 10:00 NY = 15:00 UTC
