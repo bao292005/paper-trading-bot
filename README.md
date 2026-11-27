@@ -87,6 +87,19 @@ Tua lại biểu đồ như TradingView Bar Replay và giao dịch giả lập t
 - Luyện tập trên dữ liệu ≥ 2025 sẽ "nhìn thấy" giai đoạn holdout: không ảnh hưởng bot, nhưng đừng dùng kết quả luyện tập để chỉnh bot.
   Chi tiết: [docs/cai-tien/REPLAY.md](docs/cai-tien/REPLAY.md).
 
+## Box Long Position (web `/`, kiểu TradingView)
+Đặt lệnh **chỉ long** bằng box kéo thả TP/SL; dùng được cho cả tài khoản luyện tập (khi Replay) lẫn Alpaca paper.
+- Bấm **⊞ Long** (hoặc `P`) rồi bấm lên biểu đồ tại giá vào. Mặc định SL = giá − 2×ATR14, TP = giá + 3×ATR14 (thiếu ATR: −2%/+3%).
+- Kéo mép trên = TP, mép dưới = SL, đường giữa = giá vào, mép phải = độ rộng; `Alt`+kéo thân box = dời cả box. Luôn SL < giá vào < TP.
+- Nhãn bên phải: TP (+%, +$), giá vào (qty, R:R), SL (−%, −$), đã tính phí (10 bps cổ phiếu / 25 bps crypto mỗi chiều).
+- Panel "Long Position": rủi ro **% vốn** (mặc định 1%) hoặc **$** -> qty tự tính (chặn theo tiền mặt, ≤10.000 cổ, crypto ≤200k$);
+  sửa qty tay thì tắt tự tính. Loại lệnh gợi ý: sát giá hiện tại = market, dưới = limit, trên = stop (đổi được).
+- Luyện tập: đặt ngay. Thật: modal gõ **XAC NHAN**. Cổ phiếu = bracket GTC (vào market/limit/stop_limit + TP limit + SL stop).
+  Crypto = lệnh market/limit GTC, SL/TP lưu `data/live_state.json` — **chỉ hoạt động khi `paper-bot loop --asset crypto` đang chạy**.
+- Sau khi đặt: lệnh chờ = box viền đứt, vị thế = box viền liền (tô P/L chưa chốt theo $ và R). Kéo để sửa:
+  luyện tập lưu ngay; thật bấm **Áp dụng** (XAC NHAN) hoặc **Huỷ thay đổi** (lệnh chờ cổ phiếu = huỷ + đặt lại; vị thế = sửa chân SL/TP).
+- `Esc` thoát công cụ, `Delete` xoá box nháp. Nút Short luôn tắt (không bán khống). Chi tiết: [docs/cai-tien/WEB.md](docs/cai-tien/WEB.md).
+
 ## Giao diện (UI Streamlit)
 ```bash
 uv run streamlit run src/paper_bot/ui/app.py

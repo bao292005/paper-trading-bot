@@ -21,7 +21,7 @@ HEARTBEAT_SECONDS = 10.0
 
 def create_app(load_intraday_fn=None, trading_client_fn=None, db_path=None,
                adapter_factory=None, seed_fn=None, bars_dir=None,
-               crypto_adapter_factory=None, crypto_seed_fn=None) -> FastAPI:
+               crypto_adapter_factory=None, crypto_seed_fn=None, live_state_path=None) -> FastAPI:
     """Mọi tham số None = dùng bản thật (Alpaca thật, data/trading.db, data/bars)."""
 
     @asynccontextmanager
@@ -36,6 +36,7 @@ def create_app(load_intraday_fn=None, trading_client_fn=None, db_path=None,
     state.trading_client = None  # tạo lười ở lần gọi đầu
     state.db_path = db_path or dashboard.DB_PATH
     state.bars_dir = bars_dir
+    state.live_state_path = live_state_path  # None = data/live_state.json (SL/TP crypto bot tự quản)
     state.jobs = JobManager(max_running=2, ttl=3600)  # job tester chạy nền (tối đa 2, dọn sau 1 giờ)
 
     def default_seed(symbol):  # nến phút hôm nay, để nến khung lớn đang chạy có đủ phần đã qua

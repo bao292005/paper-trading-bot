@@ -14,10 +14,12 @@ An toàn:
 Các flag trong config.flags giống hệt decision/full_policy (để kết quả live so được với backtest).
 """
 
+import contextlib
 import dataclasses
 import json
 import logging
 import math
+import os
 import pickle
 import threading
 import time
@@ -226,12 +228,60 @@ def load_state(path, run_id: str) -> dict:
     return json.loads(path.read_text()).get(run_id, {})
 
 
+@contextlib.contextmanager
+def _state_lock(path: Path):
+    """Khoá đơn giản (flock trên file .lock cạnh live_state.json): web và bot không ghi đè lẫn nhau."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path.with_suffix(".lock"), "a") as f:
+        try:
+            import fcntl
+            fcntl.flock(f, fcntl.LOCK_EX)  # nhả khi đóng file
+        except ImportError:  # Windows: không có flock -> bỏ khoá
+            pass
+        yield
+
+
+def _write_atomic(path: Path, data: dict) -> None:
+    """Ghi file tạm rồi os.replace: đang ghi dở mà sập thì file cũ vẫn nguyên."""
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, indent=2))
+    os.replace(tmp, path)
+
+
 def save_state(path, run_id: str, state: dict) -> None:
     path = Path(path)
-    data = json.loads(path.read_text()) if path.exists() else {}
-    data[run_id] = state
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2))
+    with _state_lock(path):
+        data = json.loads(path.read_text()) if path.exists() else {}
+        data[run_id] = state
+        _write_atomic(path, data)
+
+
+def set_crypto_sltp(symbol: str, stop_loss: float, take_profit: float, order_id: Optional[str] = None,
+                    path=STATE_PATH, run_id: str = RUN_ID_CRYPTO_PAPER) -> str:
+    """Web đặt/sửa SL/TP crypto (cùng khung bot đọc). Có order_id -> 'pending' (lệnh mua chờ khớp, bot tự
+    chuyển sang sltp khi có vị thế); không -> 'sltp' (vị thế đã có, giữ stop_order_id cũ). Trả tên mục đã ghi."""
+    sl, tp = float(stop_loss), float(take_profit)
+    if not (math.isfinite(sl) and math.isfinite(tp) and 0 < sl < tp):
+        raise ValueError("cần 0 < SL < TP")
+    path = Path(path)
+    levels = {"stop_loss": sl, "take_profit": tp, "asof": now_utc().isoformat(), "source": "web"}
+    with _state_lock(path):
+        data = json.loads(path.read_text()) if path.exists() else {}
+        st = data.setdefault(run_id, {})
+        if order_id:
+            section = "pending"
+            st.setdefault(section, {})[symbol] = {**levels, "order_id": str(order_id)}
+        else:
+            section = "sltp"
+            st.setdefault(section, {})[symbol] = {**st.get(section, {}).get(symbol, {}), **levels}
+        _write_atomic(path, data)
+    return section
+
+
+def get_crypto_sltp(symbol: str, path=STATE_PATH, run_id: str = RUN_ID_CRYPTO_PAPER) -> dict:
+    """{'pending': {...} | None, 'sltp': {...} | None} của 1 mã crypto (đọc, không khoá)."""
+    st = load_state(path, run_id)
+    return {k: st.get(k, {}).get(symbol) for k in ("pending", "sltp")}
 
 
 def reset_kill_switch(run_id: str, state_path=STATE_PATH, store: Optional[Store] = None) -> str:
@@ -488,6 +538,18 @@ class LiveBot:
     def _save_state(self) -> None:
         save_state(self.state_path, self.store.run_id, self.state)
 
+    def reload_sltp(self) -> None:
+        """Crypto: đầu vòng đọc lại pending/sltp từ file (web có thể vừa đặt/sửa SL/TP bằng box Long Position).
+        Bot luôn ghi file ngay sau khi tự đổi 2 mục này nên không có web sửa thì đọc lại = y hệt bộ nhớ."""
+        try:
+            disk = load_state(self.state_path, self.store.run_id)
+        except Exception as e:  # file hỏng/đang ghi: giữ bản trong bộ nhớ
+            logger.warning(f"Không đọc lại được SL/TP từ {self.state_path}: {e}")
+            return
+        for k in ("pending", "sltp"):
+            if k in disk:
+                self.state[k] = disk[k]
+
     def _stop_order_ids(self) -> set:
         return {str(v["stop_order_id"]) for v in self.state.get("sltp", {}).values() if v.get("stop_order_id")}
 
@@ -637,6 +699,7 @@ class LiveBot:
                 self.reconcile_at_start()
             snap = self.snapshot()
             if self.crypto:  # SL/TP tự quản chạy TRƯỚC khi tải nến: lỗi dữ liệu không được chặn việc cắt lỗ
+                self.reload_sltp()
                 if not self.config.dry_run:
                     self.promote_pending(snap)
                 sold = self.check_sl_tp(snap)

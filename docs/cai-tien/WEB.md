@@ -1,5 +1,24 @@
 # Nhật ký web app (agent j-web)
 
+## Long Position box (agent j-pos, 2026-11-27)
+Box TP/SL kéo thả kiểu TradingView trên trang `/`, chỉ long, cho cả tài khoản luyện tập (replay) và Alpaca paper.
+- **JS** (mỗi file ≤150 dòng): `position_math.js` (PM: snap, ATR14, mức mặc định, phí, qty theo rủi ro, R:R, gợi ý loại lệnh,
+  ràng buộc kéo SL<entry<TP, P/L chưa chốt) · `position_box.js` (vẽ overlay HTML, vẽ lại khi zoom/cuộn/Log/%/resize, nhãn, nút
+  Áp dụng/Huỷ thay đổi) · `position_drag.js` (công cụ ⊞ Long/P, bắt chuột pha capture, tắt scroll/scale chart khi kéo, Alt = dời box)
+  · `position_orders.js` (panel rủi ro/qty/loại lệnh, đặt lệnh) · `position_sync.js` (box lệnh chờ/vị thế, sửa bằng kéo).
+- **Thống nhất với `practice_drag.js`**: đường SL/TP/limit của lệnh đã có box (`pbOwnsOid`) chỉ kéo được qua box, tránh 2 hệ kéo trùng.
+- **Luyện tập**: POST `/api/practice/{sid}/orders` (không XAC NHAN); kéo box -> PATCH lệnh mua chờ (price/sl/tp) hoặc lệnh con SL/TP (price).
+- **Thật** (guard + XAC NHAN + log_event trước khi gửi, run_id `web-manual`; API cũ `/api/orders` giữ nguyên):
+  - `POST /api/position` – cổ phiếu bracket GTC (market / limit / stop -> stop_limit, limit = entry+0,5% nhưng < TP);
+    crypto market/limit GTC không bracket + `set_crypto_sltp` ghi `pending[sym]` (kèm order_id) vào `data/live_state.json`.
+  - `POST /api/position/repost` – sửa lệnh chờ: huỷ `old_order_id` rồi đặt lại (Alpaca không sửa được chân bracket đang held).
+  - `POST /api/position/legs` – sửa SL/TP vị thế: cổ phiếu `replace_order_by_id` (SL stop_price, TP limit_price); crypto ghi live_state.
+  - `GET /api/position/boxes?symbol&asset` (chỉ đọc) – box lệnh chờ + vị thế (crypto lấy SL/TP từ live_state) + bước giá/qty crypto.
+- **live.py**: `save_state`/`set_crypto_sltp` ghi nguyên tử (file tạm + `os.replace`) có khoá `flock`; bot crypto gọi
+  `reload_sltp()` đầu mỗi vòng để nhận SL/TP web vừa đặt/sửa (không web sửa thì y hệt bộ nhớ -> hành vi bot không đổi).
+- Test: `tests/test_web_position.py` (client giả: payload bracket, replace chân, thiếu XAC NHAN -> 4xx không gửi, SL/TP sai -> 422,
+  crypto ghi live_state không bracket, boxes, reload_sltp, PATCH luyện tập), `tests/test_web_position_js.py` (toán + đồng bộ, node).
+
 ## Realtime v2 (agent j-rt, 2026-11-27)
 Bối cảnh: log server có 78 lần "connection limit exceeded"; nến chỉ nhảy theo phút (chỉ có bars).
 ### Bước 1-2 – Hub bền + trades + throttle

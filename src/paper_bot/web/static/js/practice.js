@@ -65,6 +65,7 @@ function practiceRefreshChart() {
   setMarkers(practiceMarkers());
   PR.lineItems = practiceLineItems();
   setPriceLines(PR.lineItems);
+  if (typeof posSync === "function") posSync();  // box Long Position của tài khoản luyện tập
 }
 
 function practiceApply(snap) {

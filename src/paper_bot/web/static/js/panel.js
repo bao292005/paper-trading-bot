@@ -1,5 +1,5 @@
 // Panel phải: tài khoản, vị thế, lệnh chờ (tự làm mới 15s) + price line cho mã đang xem.
-const PANEL = { positions: [], orders: [], timer: null };
+const PANEL = { account: null, positions: [], orders: [], timer: null };
 
 function showErr(id, e) {
   document.getElementById(id).innerHTML = `<span class="err">${esc(e.message)}</span>`;
@@ -8,6 +8,7 @@ function showErr(id, e) {
 async function refreshAccount() {
   try {
     const a = await getJSON("/api/account");
+    PANEL.account = a;  // vốn/tiền mặt cho qty theo rủi ro (Long Position)
     const kv = (k, v, cls = "") => `<div class="kv"><span class="muted">${k}</span><span class="${cls}">${v}</span></div>`;
     const pl = a.day_pl === null ? "-" :
       `${a.day_pl >= 0 ? "+" : ""}${fmt.usd(a.day_pl)} (${fmt.num(a.day_pl_pct)}%)`;
@@ -67,6 +68,7 @@ function updatePriceLines() {
 async function refreshPanel() {
   await Promise.all([refreshAccount(), refreshPositions(), refreshOrders()]);
   updatePriceLines();
+  if (typeof posSyncReal === "function") posSyncReal();
 }
 
 function initPanel() {

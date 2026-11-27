@@ -8,7 +8,7 @@ function prRoundPrice(p) { return Math.round(p * (p < 10 ? 10000 : 100)) / (p < 
 function prHitLine(y) {
   let best = -1, dist = PR_DRAG.hitPx + 0.01;
   PR.lineItems.forEach((it, i) => {
-    if (!it.oid) return;
+    if (!it.oid || (typeof pbOwnsOid === "function" && pbOwnsOid(it.oid))) return;  // đã có box -> kéo bằng box
     const c = CH.candles.priceToCoordinate(it.price);
     if (c !== null && Math.abs(c - y) < dist) { best = i; dist = Math.abs(c - y); }
   });

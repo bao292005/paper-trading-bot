@@ -105,3 +105,23 @@ body.replay-on .real-only, body:not(.replay-on) .practice-only { display: none; 
 .eq-chart { height: 140px; margin-bottom: 6px; }
 #pr-trades table td, #pr-history table td { padding: 1px 3px; }
 #pr-msg { margin-top: 6px; word-break: break-word; }
+
+/* Long Position box (div phủ trên chart, không vẽ vào canvas) */
+.pbox-layer { position: absolute; inset: 0; z-index: 4; pointer-events: none; overflow: hidden; }
+.pbox > div { position: absolute; }
+.pb-zone { box-sizing: border-box; }
+.pb-tp { background: rgba(38, 166, 154, .20); border-top: 2px solid var(--up); }
+.pb-sl { background: rgba(239, 83, 80, .20); border-bottom: 2px solid var(--down); }
+.pb-entry { border-top: 2px solid #b0b8c8; }
+.pb-cur { background: rgba(38, 166, 154, .25); }
+.pb-cur.loss { background: rgba(239, 83, 80, .28); }
+.pbox.pending .pb-tp, .pbox.pending .pb-sl, .pbox.pending .pb-entry { border-style: dashed; opacity: .85; }
+.pbox.draft .pb-tp, .pbox.draft .pb-sl { opacity: .75; }
+.pbox.sel .pb-entry { border-top-color: #fff; }
+.pbox.dirty .pb-entry { border-top-color: #f7c948; }
+.pb-lab { transform: translateX(-100%); white-space: nowrap; font-size: 11px; padding: 0 4px; border-radius: 3px;
+          background: rgba(19, 23, 34, .85); color: var(--text); }
+.pb-lab-tp { color: var(--up); } .pb-lab-sl { color: var(--down); }
+.pb-actions { pointer-events: auto; display: flex; gap: 4px; }
+#pos-long-btn.active { background: var(--up); color: #111; }
+#pos-card { border: 1px solid #2f4f4a; }

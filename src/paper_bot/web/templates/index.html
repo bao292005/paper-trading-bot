@@ -35,6 +35,10 @@
       <button id="replay-btn" title="Bar Replay: luyện tập trên dữ liệu quá khứ (phím R)">&#9194; Replay</button>
     </div>
     <div class="group">
+      <button id="pos-long-btn" title="Long Position: bấm rồi bấm lên chart tại giá vào (phím P)">&#8862; Long</button>
+      <span title="Chỉ long: tài khoản không bán khống (không margin)"><button id="pos-short-btn" disabled>&#8863; Short</button></span>
+    </div>
+    <div class="group">
       <label title="Múi giờ hiển thị trên trục thời gian (không đổi dữ liệu)">Giờ <select id="tz-select"></select></label>
     </div>
     <div class="group right">
@@ -81,6 +85,27 @@
       <div id="side-tabs" class="side-tabs">
         <button data-tab="account" class="active">Tài khoản</button><button data-tab="stats">Thống kê</button>
       </div>
+      <section class="card tab-account" id="pos-card">
+        <h3>Long Position <span class="small muted">(&#8862; Long / phím P)</span></h3>
+        <div id="pos-empty" class="small muted">Bấm &#8862; Long rồi bấm lên chart tại giá vào. Kéo cạnh trên = TP, cạnh dưới = SL,
+          đường giữa = giá vào, Alt + kéo = dời cả box, mép phải = độ rộng.</div>
+        <div id="pos-form" hidden>
+          <div class="form-grid">
+            <label>Rủi ro <input id="pos-risk" type="number" min="0" step="any" value="1"></label>
+            <label>Đơn vị <select id="pos-risk-unit"><option value="pct">% vốn</option><option value="usd">$</option></select></label>
+            <label>Số lượng <input id="pos-qty" type="number" min="0" step="any"></label>
+            <label>Loại lệnh <select id="pos-type"><option value="market">Market</option><option value="limit">Limit</option><option value="stop">Stop</option></select></label>
+          </div>
+          <label class="small"><input type="checkbox" id="pos-auto" checked> Qty tự tính theo rủi ro (sửa tay qty = tắt)</label>
+          <div id="pos-info" class="small muted"></div>
+          <div id="pos-crypto-note" class="small err" hidden>SL/TP crypto chỉ hoạt động khi bot loop --asset crypto đang chạy</div>
+          <div class="bot-buttons">
+            <button type="button" id="pos-submit" class="primary">Đặt lệnh</button>
+            <button type="button" id="pos-discard">Xoá box</button>
+          </div>
+        </div>
+        <div id="pos-msg" class="small muted"></div>
+      </section>
       <section class="card practice practice-only tab-account">
         <h3>Tài khoản luyện tập <span class="badge warn">GIẢ LẬP</span></h3>
         <div id="pr-account" class="muted">Chưa có phiên</div>
@@ -202,6 +227,11 @@
   <script src="/static/js/practice_orders.js"></script>
   <script src="/static/js/practice_drag.js"></script>
   <script src="/static/js/practice_stats.js"></script>
+  <script src="/static/js/position_math.js"></script>
+  <script src="/static/js/position_box.js"></script>
+  <script src="/static/js/position_drag.js"></script>
+  <script src="/static/js/position_orders.js"></script>
+  <script src="/static/js/position_sync.js"></script>
   <script src="/static/js/main.js"></script>
 </body>
 </html>

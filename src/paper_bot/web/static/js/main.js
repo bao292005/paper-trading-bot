@@ -3,6 +3,8 @@ async function reload(keepRange) {  // keepRange: đổi khung thì giữ khoả
   await loadAll(keepRange);
   refreshLegend();
   updatePriceLines();
+  posSync();      // đổi mã/khung: bỏ box của mã cũ
+  posSyncReal();  // thường: hỏi box của mã mới (replay: không làm gì)
 }
 
 const CRYPTO_SYMBOLS = ["BTC/USD", "ETH/USD", "SOL/USD", "AVAX/USD", "LINK/USD"];  // whitelist, khớp server
@@ -103,4 +105,7 @@ window.addEventListener("DOMContentLoaded", () => {
   initBotUI();
   initReplay();
   initPractice();
+  initPositionBox();
+  initPositionDrag();
+  initPositionOrders();
 });

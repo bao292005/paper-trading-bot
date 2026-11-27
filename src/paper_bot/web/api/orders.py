@@ -9,7 +9,8 @@ from typing import Any, Dict
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
 
 from ...ui.core import build_once_command, run_command
-from .order_rules import guard, require_confirm, validate_crypto_web_order, validate_order, validate_order_id
+from .order_rules import (guard, require_confirm, stop_limit_price, validate_crypto_web_order, validate_levels,
+                          validate_order, validate_order_id, validate_position)
 from .trading import call_alpaca, enum_text, get_client
 
 router = APIRouter()
@@ -93,6 +94,106 @@ def cancel_order(order_id: str, request: Request, body: Dict[str, Any] = Body(..
     log_event(request, "web_cancel_order", f"huỷ lệnh {oid}", {"order_id": oid})
     call_alpaca(client.cancel_order_by_id, oid)
     return {"ok": True, "id": oid}
+
+
+# ---------- Box Long Position (chỉ long, GTC) ----------
+def build_bracket_request(o: Dict[str, Any]):
+    """Cổ phiếu: bracket GTC (vào market/limit/stop_limit + TP limit + SL stop)."""
+    from alpaca.trading.enums import OrderClass, OrderSide, TimeInForce
+    from alpaca.trading.requests import (LimitOrderRequest, MarketOrderRequest, StopLimitOrderRequest, StopLossRequest,
+                                         TakeProfitRequest)
+
+    common = dict(symbol=o["symbol"], qty=o["qty"], side=OrderSide.BUY, time_in_force=TimeInForce.GTC,
+                  order_class=OrderClass.BRACKET, take_profit=TakeProfitRequest(limit_price=o["tp"]),
+                  stop_loss=StopLossRequest(stop_price=o["sl"]))
+    if o["type"] == "limit":
+        return LimitOrderRequest(limit_price=o["entry"], **common)
+    if o["type"] == "stop":
+        return StopLimitOrderRequest(stop_price=o["entry"], limit_price=stop_limit_price(o["entry"], o["tp"]), **common)
+    return MarketOrderRequest(**common)
+
+
+def _state_path(request: Request):
+    from ...live import STATE_PATH
+    return request.app.state.live_state_path or STATE_PATH
+
+
+def _submit_position(request: Request, client, o: Dict[str, Any]) -> dict:
+    """Gửi lệnh vào. Crypto: lệnh thường (không bracket) rồi cất SL/TP vào live_state (pending) cho bot tự quản."""
+    if o["asset"] == "stock":
+        res = call_alpaca(client.submit_order, order_data=build_bracket_request(o))
+        return {"id": str(getattr(res, "id", "")), "status": enum_text(getattr(res, "status", None))}
+    from ...live import set_crypto_sltp
+
+    req = build_crypto_request({"symbol": o["symbol"], "qty": o["qty"], "side": "buy", "type": o["type"],
+                                "limit_price": o["entry"] if o["type"] == "limit" else None})
+    res = call_alpaca(client.submit_order, order_data=req)
+    oid = str(getattr(res, "id", ""))
+    set_crypto_sltp(o["symbol"], o["sl"], o["tp"], order_id=oid or "unknown", path=_state_path(request))
+    return {"id": oid, "status": enum_text(getattr(res, "status", None)), "sltp": "live_state"}
+
+
+def _position_order(request: Request, body: Dict[str, Any]):
+    require_confirm(body)
+    client = get_client(request)
+    min_qty = _crypto_min_qty(client, body.get("symbol", "")) if body.get("asset") == "crypto" else 0.0
+    return client, validate_position(body, min_qty)
+
+
+@router.post("/api/position", dependencies=[Depends(guard)])
+def place_position(request: Request, body: Dict[str, Any] = Body(...)):
+    """Đặt lệnh LONG từ box: cổ phiếu bracket GTC; crypto market/limit GTC + SL/TP vào live_state."""
+    client, o = _position_order(request, body)
+    log_event(request, "web_position_order",
+              f"long {o['qty']} {o['symbol']} {o['type']} @ {o['entry']} SL {o['sl']} TP {o['tp']}", o)
+    return {"ok": True, "symbol": o["symbol"], **_submit_position(request, client, o)}
+
+
+@router.post("/api/position/repost", dependencies=[Depends(guard)])
+def repost_position(request: Request, body: Dict[str, Any] = Body(...)):
+    """Sửa lệnh mua đang chờ (giá vào/SL/TP): Alpaca không sửa được chân đang 'held' -> huỷ lệnh cũ + đặt lại."""
+    client, o = _position_order(request, body)
+    old = validate_order_id(str(body.get("old_order_id", "")))
+    log_event(request, "web_position_repost", f"huỷ {old} + đặt lại long {o['qty']} {o['symbol']} @ {o['entry']}",
+              {**o, "old_order_id": old})
+    call_alpaca(client.cancel_order_by_id, old)
+    return {"ok": True, "symbol": o["symbol"], "old_id": old, **_submit_position(request, client, o)}
+
+
+@router.post("/api/position/legs", dependencies=[Depends(guard)])
+def edit_position_legs(request: Request, body: Dict[str, Any] = Body(...)):
+    """Sửa SL/TP của vị thế: cổ phiếu = replace chân bracket (SL: stop_price, TP: limit_price);
+    crypto = ghi live_state (sltp; còn chờ khớp thì pending)."""
+    from alpaca.trading.requests import ReplaceOrderRequest
+
+    require_confirm(body)
+    crypto = body.get("asset", "stock") == "crypto"
+    lv = validate_levels(body, crypto)
+    sym = body.get("symbol")
+    if crypto:
+        from ...config import CRYPTO_UNIVERSE
+        from ...live import get_crypto_sltp, set_crypto_sltp
+
+        if sym not in CRYPTO_UNIVERSE:
+            raise HTTPException(422, "mã crypto không nằm trong whitelist")
+        path = _state_path(request)
+        cur = get_crypto_sltp(sym, path)
+        oid = (cur["pending"] or {}).get("order_id") if cur["pending"] and not cur["sltp"] else None
+        log_event(request, "web_position_sltp", f"{sym}: SL {lv['sl']} TP {lv['tp']} (live_state)", {"symbol": sym, **lv})
+        return {"ok": True, "symbol": sym, "section": set_crypto_sltp(sym, lv["sl"], lv["tp"], order_id=oid, path=path)}
+    legs = {k: validate_order_id(str(body[k])) for k in ("sl_id", "tp_id") if body.get(k)}
+    if not legs:
+        raise HTTPException(422, "thiếu sl_id/tp_id (chân SL/TP cần sửa)")
+    client = get_client(request)
+    log_event(request, "web_position_legs", f"{sym}: sửa chân SL {lv['sl']} TP {lv['tp']}", {"symbol": sym, **lv, **legs})
+    done = {}
+    if "sl_id" in legs:
+        done["sl"] = str(getattr(call_alpaca(client.replace_order_by_id, legs["sl_id"],
+                                             ReplaceOrderRequest(stop_price=lv["sl"])), "id", ""))
+    if "tp_id" in legs:
+        done["tp"] = str(getattr(call_alpaca(client.replace_order_by_id, legs["tp_id"],
+                                             ReplaceOrderRequest(limit_price=lv["tp"])), "id", ""))
+    return {"ok": True, "symbol": sym, "replaced": done}
 
 
 @router.post("/api/bot/run", dependencies=[Depends(guard)])
