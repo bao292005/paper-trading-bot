@@ -178,6 +178,14 @@ def modify(request: Request, sid: str, oid: str, body: dict = Body(...)):
     return state(sid, get_session(request, sid))
 
 
+@router.post("/api/practice/{sid}/sltp", dependencies=[Depends(guard)])
+def position_sltp(request: Request, sid: str, body: dict = Body(...)):
+    """Gắn/sửa SL/TP cho cả vị thế luyện tập (kể cả vị thế chưa có SL/TP). sl = tp = null -> gỡ."""
+    acc = open_session(request, sid)
+    _sim(acc.set_position_sltp, num(body, "sl"), num(body, "tp"))
+    return state(sid, get_session(request, sid))
+
+
 @router.post("/api/practice/{sid}/close", dependencies=[Depends(guard)])
 def close(request: Request, sid: str):
     acc = open_session(request, sid)

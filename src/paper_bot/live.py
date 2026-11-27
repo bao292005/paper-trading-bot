@@ -257,25 +257,92 @@ def save_state(path, run_id: str, state: dict) -> None:
 
 
 def set_crypto_sltp(symbol: str, stop_loss: float, take_profit: float, order_id: Optional[str] = None,
-                    path=STATE_PATH, run_id: str = RUN_ID_CRYPTO_PAPER) -> str:
+                    path=STATE_PATH, run_id: str = RUN_ID_CRYPTO_PAPER, created_by: str = "web") -> str:
     """Web đặt/sửa SL/TP crypto (cùng khung bot đọc). Có order_id -> 'pending' (lệnh mua chờ khớp, bot tự
-    chuyển sang sltp khi có vị thế); không -> 'sltp' (vị thế đã có, giữ stop_order_id cũ). Trả tên mục đã ghi."""
+    chuyển sang sltp khi có vị thế); không -> 'sltp' (vị thế đã có, giữ stop_order_id cũ). Trả tên mục đã ghi.
+    Mỗi entry: stop_loss, take_profit, side ("long"), qty_mode ("all" = bán toàn bộ vị thế), created_by, created_at."""
     sl, tp = float(stop_loss), float(take_profit)
     if not (math.isfinite(sl) and math.isfinite(tp) and 0 < sl < tp):
         raise ValueError("cần 0 < SL < TP")
     path = Path(path)
-    levels = {"stop_loss": sl, "take_profit": tp, "asof": now_utc().isoformat(), "source": "web"}
+    now = now_utc().isoformat()
+    levels = {"stop_loss": sl, "take_profit": tp, "asof": now, "source": "web", "side": "long", "qty_mode": "all"}
     with _state_lock(path):
         data = json.loads(path.read_text()) if path.exists() else {}
         st = data.setdefault(run_id, {})
         if order_id:
             section = "pending"
-            st.setdefault(section, {})[symbol] = {**levels, "order_id": str(order_id)}
+            st.setdefault(section, {})[symbol] = {**levels, "order_id": str(order_id), "created_by": created_by,
+                                                  "created_at": now}
         else:
             section = "sltp"
-            st.setdefault(section, {})[symbol] = {**st.get(section, {}).get(symbol, {}), **levels}
+            old = st.get(section, {}).get(symbol, {})
+            st.setdefault(section, {})[symbol] = {"created_by": created_by, "created_at": now, **old, **levels}
         _write_atomic(path, data)
     return section
+
+
+# ---------- Chống bán 2 lần: ai sắp bán (web server / LiveBot) thì "giữ chỗ" entry bằng "triggering" ----------
+TRIGGER_STALE_SECONDS = 120  # giữ chỗ chưa có order_id quá lâu (tiến trình chết giữa chừng) -> coi như bỏ
+
+
+def _edit_sltp(path, run_id: str, fn):
+    """Đọc-sửa-ghi mục 'sltp' của run_id trong khoá. fn(sltp_dict) -> kết quả trả về."""
+    path = Path(path)
+    with _state_lock(path):
+        data = json.loads(path.read_text()) if path.exists() else {}
+        sltp = data.setdefault(run_id, {}).setdefault("sltp", {})
+        out = fn(sltp)
+        _write_atomic(path, data)
+    return out
+
+
+def crypto_sltp_entries(path=STATE_PATH, run_id: str = RUN_ID_CRYPTO_PAPER) -> dict:
+    """Mọi entry SL/TP đang canh (vị thế đã có): {mã: {...}} (đọc, không khoá)."""
+    return dict(load_state(path, run_id).get("sltp", {}))
+
+
+def trigger_active(entry: Optional[dict], now: Optional[float] = None, stale: float = TRIGGER_STALE_SECONDS) -> bool:
+    """Entry đang có người bán? Có order_id (lệnh đã gửi) -> luôn đúng; chưa có -> đúng nếu chưa quá `stale` giây."""
+    trig = (entry or {}).get("triggering")
+    if not trig:
+        return False
+    if trig.get("order_id"):
+        return True
+    return (now if now is not None else time.time()) - float(trig.get("at", 0)) < stale
+
+
+def claim_crypto_sltp(symbol: str, by: str, path=STATE_PATH, run_id: str = RUN_ID_CRYPTO_PAPER,
+                      price: Optional[float] = None) -> bool:
+    """Giữ chỗ trước khi bán. False = người khác đang bán (bỏ qua). Không có entry trên file -> True, không ghi
+    (bot đang giữ SL/TP trong bộ nhớ; web server chỉ canh entry có trên file nên không thể trùng)."""
+    def fn(sltp):
+        cur = sltp.get(symbol)
+        if cur is None:
+            return True
+        if trigger_active(cur):
+            return False
+        cur["triggering"] = {"by": by, "at": time.time(), "price": price}
+        return True
+    return _edit_sltp(path, run_id, fn)
+
+
+def mark_crypto_sltp_order(symbol: str, order_id: str, path=STATE_PATH, run_id: str = RUN_ID_CRYPTO_PAPER) -> None:
+    """Đã gửi lệnh bán: ghi order_id vào giữ chỗ (khởi động lại server vẫn theo dõi tiếp được)."""
+    def fn(sltp):
+        if symbol in sltp:
+            sltp[symbol].setdefault("triggering", {"by": "?", "at": time.time()})["order_id"] = str(order_id)
+    _edit_sltp(path, run_id, fn)
+
+
+def release_crypto_sltp(symbol: str, path=STATE_PATH, run_id: str = RUN_ID_CRYPTO_PAPER) -> None:
+    """Bỏ giữ chỗ (gửi lệnh lỗi / lệnh bị huỷ): lần kiểm sau được thử lại."""
+    _edit_sltp(path, run_id, lambda sltp: sltp.get(symbol, {}).pop("triggering", None))
+
+
+def remove_crypto_sltp(symbol: str, path=STATE_PATH, run_id: str = RUN_ID_CRYPTO_PAPER) -> bool:
+    """Xoá entry SL/TP (đã khớp / vị thế về 0 / người dùng gỡ). Trả True nếu có entry để xoá."""
+    return _edit_sltp(path, run_id, lambda sltp: sltp.pop(symbol, None) is not None)
 
 
 def get_crypto_sltp(symbol: str, path=STATE_PATH, run_id: str = RUN_ID_CRYPTO_PAPER) -> dict:
@@ -666,6 +733,8 @@ class LiveBot:
                     continue
                 if sym in snap["open_symbols"]:
                     continue  # đang có lệnh chờ khác của mã này
+                if trigger_active(lv):
+                    continue  # web server (SLTPMonitor) đang bán mã này
                 price = self.data.get_latest_price(sym)
                 if price is None:
                     logger.warning(f"{sym}: không có giá mới nhất, bỏ qua kiểm tra SL/TP vòng này")
@@ -673,6 +742,10 @@ class LiveBot:
                 hit = ("sl_hit" if lv.get("stop_loss") and price <= lv["stop_loss"]
                        else "tp_hit" if lv.get("take_profit") and price >= lv["take_profit"] else None)
                 if hit is None:
+                    continue
+                if not self.config.dry_run and not claim_crypto_sltp(sym, "livebot", self.state_path,
+                                                                     self.store.run_id, price):
+                    logger.info(f"{sym}: web server đang bán theo SL/TP, bot bỏ qua")
                     continue
                 msg = f"{sym}: giá {price} {'≤ SL' if hit == 'sl_hit' else '≥ TP'} -> bán {qty} (toàn bộ vị thế thực)"
                 self.store.log_event(hit, msg, level="WARNING", data={"price": price, **lv, "qty": qty})

@@ -25,9 +25,12 @@ async function refreshPositions() {
       `<tr class="clickable" data-symbol="${esc(p.symbol)}"><td><b>${esc(p.symbol)}</b> ${sideTag(p.qty)}</td>` +
       `<td class="num">${fmt.qty(p.qty)}</td><td class="num">${fmt.num(p.avg_entry_price)}</td>` +
       `<td class="num ${fmt.cls(p.unrealized_pl)}">${fmt.num(p.unrealized_pl)}</td>` +
-      `<td><button class="mini" data-close="${esc(p.symbol)}" title="Đóng cả vị thế bằng lệnh market ngược chiều">Đóng</button></td></tr>`).join("");
+      (typeof sltpCells === "function" ? sltpCells(p.symbol) : "") +
+      `<td><button class="mini" data-sltp="${esc(p.symbol)}" title="Đặt / sửa / gỡ SL-TP cho vị thế">SL/TP</button>` +
+      `<button class="mini" data-close="${esc(p.symbol)}" title="Đóng cả vị thế bằng lệnh market ngược chiều">Đóng</button></td></tr>`).join("");
     document.getElementById("positions").innerHTML = rows
-      ? `<table><tr><th>Mã</th><th class="num">Qty</th><th class="num">Giá vào</th><th class="num">P/L</th><th></th></tr>${rows}</table>`
+      ? `<table><tr><th>Mã</th><th class="num">Qty</th><th class="num">Giá vào</th><th class="num">P/L</th>` +
+        `<th class="num">SL</th><th class="num">TP</th><th>Nguồn</th><th></th></tr>${rows}</table>`
       : "Không có vị thế";
   } catch (e) { PANEL.positions = []; showErr("positions", e); }
 }
@@ -84,7 +87,8 @@ function updatePriceLines() {
 }
 
 async function refreshPanel() {
-  await Promise.all([refreshAccount(), refreshPositions(), refreshOrders()]);
+  const sl = typeof sltpRefresh === "function" ? sltpRefresh() : null;  // mức SL/TP cho cột của bảng vị thế
+  await Promise.all([refreshAccount(), sl ? sl.then(refreshPositions) : refreshPositions(), refreshOrders()]);
   updatePriceLines();
   if (typeof posSyncReal === "function") posSyncReal();
 }
@@ -96,6 +100,8 @@ function initPanel() {
       if (btn) { cancelOrder(btn.dataset.cancel); return; }
       const cl = ev.target.closest("button[data-close]");
       if (cl) { closePosition(cl.dataset.close); return; }
+      const st = ev.target.closest("button[data-sltp]");
+      if (st) { sltpOpen("real", st.dataset.sltp, CRYPTO_SYMBOLS.includes(st.dataset.sltp) ? "crypto" : "stock"); return; }
       const tr = ev.target.closest("tr[data-symbol]");
       if (tr) selectSymbol(tr.dataset.symbol, CRYPTO_SYMBOLS.includes(tr.dataset.symbol) ? "crypto" : "stock");
     });

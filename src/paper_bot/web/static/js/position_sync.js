@@ -30,12 +30,16 @@ function posSync() {
   else if (PS.real && PS.real.symbol === CH.symbol && PS.real.asset === CH.asset) specs = PS.real.boxes;
   for (const b of [...PB.boxes]) {
     if (b.symbol !== CH.symbol || b.account !== account) { pbRemove(b); continue; }  // đổi mã / vào-ra replay
+    if (b.sltp) {  // box mở từ nút SL/TP: giữ tới khi áp dụng xong / bỏ / vị thế đóng
+      if (typeof sltpHasPos === "function" && !sltpHasPos(b)) pbRemove(b);
+      continue;
+    }
     if (b.kind !== "draft" && !specs.some((x) => x.key === b.key)) pbRemove(b);      // đã khớp xong / huỷ / đóng
   }
   for (const sp of specs) {
     let b = PB.boxes.find((x) => x.key === sp.key);
     const lv = { entry: sp.entry, sl: sp.sl, tp: sp.tp, side: sp.side === "short" ? "short" : "long" };
-    if (!PM.valid(lv)) { if (b) pbRemove(b); continue; }
+    if (!PM.valid(lv, sp.kind === "position")) { if (b) pbRemove(b); continue; }
     if (!b) {
       const t0 = sp.t0 || psDefaultT0();
       b = { symbol: CH.symbol, account, t0, width: Math.max(20, D.bars.length - pbIndexOf(t0) + 5), dirty: false };
@@ -68,7 +72,7 @@ function pbOwnsOid(oid) {
 // Thả chuột sau khi kéo: nháp thì thôi; luyện tập -> PATCH ngay; thật -> chờ bấm "Áp dụng"
 async function posDragEnd(b, lv) {
   if (b.kind === "draft") return;
-  if (b.account === "real") { b.dirty = posMoved(b); pbSchedule(); return; }
+  if (b.account === "real" || b.sltp) { b.dirty = b.sltp || posMoved(b); posChanged(b, true); return; }
   const url = (oid) => `/api/practice/${PR.sid}/orders/${encodeURIComponent(oid)}`;
   b.busy = true;
   let ok = true;
@@ -86,26 +90,27 @@ async function posDragEnd(b, lv) {
 }
 
 function pbRevert(b) {
+  if (b.sltp) { pbRemove(b); posRender(); pbSchedule(); return; }  // box SL/TP mới: bỏ luôn
   if (b.orig) Object.assign(b, b.orig);
   b.dirty = false;
   pbSchedule();
 }
 
-// Thật: XAC NHAN rồi gửi. Lệnh chờ -> huỷ + đặt lại bracket; vị thế -> sửa chân SL/TP (crypto: live_state)
+// Thật: XAC NHAN rồi gửi. Lệnh chờ -> huỷ + đặt lại bracket; vị thế -> POST /api/sltp (sltp.js)
 async function pbApply(b) {
-  if (b.account !== "real" || !b.dirty || b.busy) return;
-  const pending = b.kind === "pending", s = PM.stats({ ...b, qty: Math.abs(b.qty) }), SIDE = pbSide(b).toUpperCase();
-  const rows = [["Mã", CH.symbol], ["Việc", pending ? "huỷ lệnh chờ cũ + đặt lại" : "sửa SL/TP của vị thế"]];
+  if (b.kind === "position" && (b.account === "real" || b.sltp)) { sltpApply(b); return; }
+  if (b.account !== "real" || b.kind !== "pending" || !b.dirty || b.busy) return;
+  const s = PM.stats({ ...b, qty: Math.abs(b.qty) }), SIDE = pbSide(b).toUpperCase();
+  const rows = [["Mã", CH.symbol], ["Việc", "huỷ lệnh chờ cũ + đặt lại"]];
   for (const k of ["entry", "sl", "tp"]) if (b[k] !== b.orig[k]) rows.push([k.toUpperCase(), `${pbFmtP(b.orig[k])} → ${pbFmtP(b[k])}`]);
   rows.push(["Qty", fmt.qty(b.qty)], ["R:R", s.rr === null ? "-" : fmt.num(s.rr)], ["Rủi ro (sau phí)", fmt.usd(s.loss)]);
   const note = CH.asset === "crypto" ? `<p class="small err">SL/TP crypto chỉ hoạt động khi bot loop --asset crypto đang chạy</p>` : "";
-  const confirm = await askConfirm(pending ? `Sửa lệnh chờ ${SIDE}` : `Sửa SL/TP vị thế ${SIDE}`, summaryTable(rows) + note);
+  const confirm = await askConfirm(`Sửa lệnh chờ ${SIDE}`, summaryTable(rows) + note);
   if (!confirm) return;
   const base = { symbol: CH.symbol, asset: CH.asset, side: pbSide(b), entry: b.entry, sl: b.sl, tp: b.tp, confirm };
   b.busy = true;
   try {
-    if (pending) await sendJSON("POST", "/api/position/repost", { ...base, old_order_id: b.ids.entry, type: b.type, qty: b.qty });
-    else await sendJSON("POST", "/api/position/legs", { ...base, sl_id: b.ids.sl || null, tp_id: b.ids.tp || null });
+    await sendJSON("POST", "/api/position/repost", { ...base, old_order_id: b.ids.entry, type: b.type, qty: b.qty });
     b.orig = { entry: b.entry, sl: b.sl, tp: b.tp };
     b.dirty = false;
     posMsg("Đã áp dụng thay đổi");

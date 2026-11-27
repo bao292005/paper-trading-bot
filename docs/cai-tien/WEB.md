@@ -1,5 +1,24 @@
 # Nhật ký web app (agent j-web)
 
+## SL/TP cho mọi vị thế (agent j-sltp, 2026-11-27)
+Nút **SL/TP** trên từng dòng vị thế (thật + luyện tập) -> box vị thế hiện trên chart đúng mã, entry = giá vốn TB, SL/TP = mức đang có
+(chưa có: ±2×ATR / 3×ATR). Kéo hoặc nhập số -> **Áp dụng** (thật: XAC NHAN) / **Gỡ SL/TP** (thật: XAC NHAN).
+Long: SL < giá hiện tại < TP; short ngược lại. Sai thứ tự -> chặn; mức đã bị vượt -> hỏi thêm 1 lần (`allow_cross`), server cũng kiểm (409).
+- **Bước 1 – live_state + monitor**: `live.py` thêm `claim/mark/release/remove_crypto_sltp`, cờ `triggering` (quá 120s = hết hạn) chống bán 2 lần;
+  LiveBot bỏ qua entry đang triggering và claim trước khi bán. `web/sltp_monitor.py` (SLTPMonitor): chạy trong lifespan web (1 monitor,
+  chỉ khi dùng client thật), mỗi `PAPER_SLTP_INTERVAL` giây (mặc định 3) lấy giá mid/trade; long chạm SL/TP -> market SELL đúng qty broker
+  (kill switch không chặn lệnh bán). Event run_id `web-sltp`: `sltp_trigger` / `sltp_hit` / `sltp_failed` / `sltp_cleared` (vị thế về 0 -> xoá).
+  Công tắc lưu ở `live_state["web-sltp"]` (mặc định BẬT). Lỗi mạng chỉ ghi `last_error`, không làm sập server.
+- **Bước 2 – API** (`web/api/sltp.py`): `POST /api/sltp` {asset, symbol, sl, tp, confirm[, allow_cross]}: cổ phiếu = OCO Alpaca
+  (limit TP + stop SL, qty = số đang nắm, chiều ngược, GTC); đã có OCO/bracket -> replace từng chân, lỗi -> huỷ hết lệnh đóng rồi đặt OCO mới
+  (`mode` = replace / cancel_replace / oco_new); lệnh không phải đóng vị thế không bị đụng. Crypto = ghi live_state (`created_by="web"`), entry đang
+  triggering -> 409. `DELETE /api/sltp`, `GET /api/sltp` (levels + nguồn `sàn` / `server` / `bot`), `GET /api/sltp/status`, `POST /api/sltp/monitor`
+  {enabled, confirm}. Event run_id `web-manual`: `web_sltp_set` / `web_sltp_remove` / `web_sltp_monitor`. `GET /api/position/boxes` nhận OCO.
+  Luyện tập: `PracticeAccount.set_position_sltp` + `POST /api/practice/{sid}/sltp` (null/null = gỡ). Test `test_web_sltp.py`, `test_sim_position_sltp.py`.
+- **Bước 3 – UI**: `sltp_math.js` (SLT.check/levels/statusText, hàm thuần), `sltp.js` (mở box, ô nhập, Áp dụng/Gỡ), `sltp_panel.js`
+  (cột SL/TP/Nguồn, dòng "Server canh SL/TP ● (kiểm cách đây Xs)" + nút Bật/Tắt). Box vị thế kéo tự do (SL qua được giá vốn, chỉ cần SL < TP).
+  Test `test_web_sltp_js.py`.
+
 ## Short (agent j-short, 2026-11-27)
 Lệnh SHORT: box Short Position + bán khống (luyện tập: stock + crypto; thật: chỉ cổ phiếu). Bot tự động vẫn chỉ long.
 - **Bước 1 – sim** (`sim/*`, `report.py`): vị thế có dấu (qty < 0 = short); bán khi không có vị thế = mở short, mua khi short = đóng/giảm;

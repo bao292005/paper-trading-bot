@@ -151,6 +151,9 @@ def position_boxes(request: Request, symbol: str, asset: str = "stock"):
     exits = []  # lệnh đang mở không phải lệnh vào chờ (= SL/TP của vị thế)
     for o in rows:
         legs, side = list(getattr(o, "legs", None) or []), enum_text(o.side)
+        if enum_text(getattr(o, "order_class", None)) == "oco":  # OCO gắn cho vị thế (/api/sltp): mẹ = TP, chân = SL
+            exits.extend([o] + legs)
+            continue
         if enum_text(getattr(o, "status", None)) == "filled":  # mẹ đã khớp mà vẫn trả kèm chân đang mở
             exits.extend(legs)
             continue

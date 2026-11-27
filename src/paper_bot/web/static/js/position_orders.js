@@ -31,7 +31,7 @@ function posChanged(b, selectOnly) {
       b.qty = r.qty; b.capped = r.capped;
     }
   }
-  if (!selectOnly && b.kind !== "draft" && b.account === "real") b.dirty = posMoved(b);
+  if (!selectOnly && b.kind !== "draft" && (b.account === "real" || b.sltp)) b.dirty = !!b.sltp || posMoved(b);
   if (b === PB.sel) posRender();
   pbSchedule();
 }
@@ -40,7 +40,8 @@ function posMoved(b) { return !!b.orig && (b.entry !== b.orig.entry || b.sl !== 
 
 function posRender() {
   const b = PB.sel, draft = !!b && b.kind === "draft";
-  $pos("pos-empty").hidden = draft;
+  if (typeof sltpRender === "function") sltpRender();  // ô nhập SL/TP khi chọn box vị thế
+  $pos("pos-empty").hidden = draft || (!!b && b.kind === "position");
   $pos("pos-form").hidden = !draft;
   if (!draft) return;
   $pos("pos-type").value = b.type;

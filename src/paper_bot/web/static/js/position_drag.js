@@ -105,7 +105,7 @@ function pdMove(ev) {
   } else {
     const price = CH.candles.coordinateToPrice(p.y);
     if (price === null || d.grab === null) return;
-    Object.assign(b, PM.drag(d.lv, d.part, price, pbStep(), d.grab));
+    Object.assign(b, PM.drag(d.lv, d.part, price, pbStep(), d.grab, b.kind === "position"));
     d.moved = b.entry !== d.lv.entry || b.sl !== d.lv.sl || b.tp !== d.lv.tp;
   }
   posChanged(b);

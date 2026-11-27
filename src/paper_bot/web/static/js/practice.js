@@ -15,9 +15,10 @@ function practiceRender() {
   document.getElementById("pr-notes").textContent = (s.notes || []).join(" · ");
   const p = s.position;
   document.getElementById("pr-position").innerHTML = p
-    ? `<table><tr><th>Mã</th><th class="num">Qty</th><th class="num">Giá vốn</th><th class="num">P/L</th></tr>` +
+    ? `<table><tr><th>Mã</th><th class="num">Qty</th><th class="num">Giá vốn</th><th class="num">P/L</th><th></th></tr>` +
       `<tr><td><b>${esc(s.symbol)}</b> ${sideTag(p.qty)}</td><td class="num">${fmt.qty(p.qty)}</td><td class="num">${fmt.num(p.avg_price)}</td>` +
-      `<td class="num ${fmt.cls(p.unrealized)}">${fmt.num(p.unrealized)}</td></tr></table>`
+      `<td class="num ${fmt.cls(p.unrealized)}">${fmt.num(p.unrealized)}</td>` +
+      `<td><button class="mini" data-psltp="1" title="Gắn / sửa / gỡ SL-TP cho vị thế luyện tập">SL/TP</button></td></tr></table>`
     : "Không có vị thế";
   if (typeof practiceSyncForm === "function") practiceSyncForm();  // SL/TP bật/tắt theo chiều vị thế mới
   const rows = s.orders.map((o) =>

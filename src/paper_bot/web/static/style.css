@@ -70,6 +70,9 @@ button.primary:disabled, button.danger:disabled { opacity: .4; cursor: not-allow
 button.danger { background: #8e2b2e; color: #fff; }
 button.danger:hover { background: var(--down); }
 button.mini { padding: 1px 6px; font-size: 11px; border-color: var(--line); }
+button.mini + button.mini { margin-left: 3px; }
+.sltp-status-row { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-bottom: 6px; }
+#sltp-edit { border-top: 1px solid var(--line); margin-top: 6px; padding-top: 6px; }
 .bot-buttons { display: flex; gap: 6px; margin: 8px 0; flex-wrap: wrap; }
 #ord-msg { margin-top: 6px; word-break: break-word; }
 #bot-output { max-height: 220px; overflow: auto; white-space: pre-wrap; word-break: break-word; font-size: 11px;

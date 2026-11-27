@@ -90,13 +90,15 @@ const PM = {
   // Ràng buộc khi kéo. lv = {entry, sl, tp, side} lúc bắt đầu kéo; part = tp | sl | entry | body;
   // price = giá tại con trỏ; grab = giá lúc nhấn chuột (chỉ dùng cho body).
   // Luôn giữ mức dưới < entry < mức trên (long SL < entry < TP, short TP < entry < SL), mức dưới > 0.
-  drag(lv, part, price, step, grab) {
+  // free = vị thế đã khớp: SL/TP chỉ cần giữ mức dưới < mức trên (được kéo SL qua giá vốn để khoá lời)
+  drag(lv, part, price, step, grab, free) {
     step = step > 0 ? step : 0.01;
     const [lo, hi] = PM.lohi(lv.side);
     const p = PM.snap(price, step), out = { entry: lv.entry, sl: lv.sl, tp: lv.tp };
     if (lv.side) out.side = lv.side;
-    if (part === hi) out[hi] = Math.max(p, PM.snap(lv.entry + step, step));
-    else if (part === lo) out[lo] = Math.max(step, Math.min(p, PM.snap(lv.entry - step, step)));
+    const hiMin = free ? lv[lo] : lv.entry, loMax = free ? lv[hi] : lv.entry;
+    if (part === hi) out[hi] = Math.max(p, PM.snap(hiMin + step, step));
+    else if (part === lo) out[lo] = Math.max(step, Math.min(p, PM.snap(loMax - step, step)));
     else if (part === "entry") out.entry = Math.min(Math.max(p, PM.snap(lv[lo] + step, step)), PM.snap(lv[hi] - step, step));
     else if (part === "body") {
       const d = Math.max(PM.snap(p - PM.snap(grab, step), step), PM.snap(step - lv[lo], step));
@@ -111,9 +113,9 @@ const PM = {
     return { pl: Math.abs(qty) * d * (cur - entry), r: r === null ? null : Number(r.toFixed(2)) };
   },
 
-  // Mức hợp lệ theo chiều (lv.side, mặc định long)?
-  valid(lv) {
+  // Mức hợp lệ theo chiều (lv.side, mặc định long)? free = vị thế: chỉ cần mức dưới < mức trên
+  valid(lv, free) {
     const [lo, hi] = PM.lohi(lv.side);
-    return lv[lo] > 0 && lv[lo] < lv.entry && lv.entry < lv[hi];
+    return lv[lo] > 0 && (free ? lv[lo] < lv[hi] : lv[lo] < lv.entry && lv.entry < lv[hi]);
   },
 };

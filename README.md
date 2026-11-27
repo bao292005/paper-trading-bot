@@ -110,6 +110,14 @@ Tua lại biểu đồ như TradingView Bar Replay và giao dịch giả lập t
 - Panel "Vị thế" hiện nhãn LONG/SHORT (qty âm = short) + nút **Đóng** (market ngược chiều, cần XAC NHAN).
 - Form đặt lệnh cũ (`/api/orders`) giữ nguyên hành vi; mở short thật chỉ qua box. Bot tự động (backtest/prereg/loop) vẫn **chỉ long**.
 
+### SL/TP cho mọi vị thế
+- Nút **SL/TP** trên mỗi dòng "Vị thế" (và "Vị thế luyện tập"): box vị thế hiện trên chart (tự chuyển mã), entry = giá vốn;
+  kéo đường SL/TP hoặc nhập số -> **Áp dụng** (XAC NHAN). **Gỡ SL/TP** cũng cần XAC NHAN. Mức đã bị giá vượt qua -> hỏi thêm 1 lần.
+- Cổ phiếu: **OCO trên sàn Alpaca** (GTC, chạy cả khi tắt server); sửa = replace từng chân (không được thì huỷ + đặt lại).
+- Crypto: **web server tự canh** (giá mid mỗi `PAPER_SLTP_INTERVAL`=3s, chạm -> BÁN market), dùng chung `data/live_state.json` với bot loop.
+  Dòng "Server canh SL/TP ● (kiểm cách đây Xs)" + nút Bật/Tắt. Tắt server = không canh.
+- Panel có cột SL / TP / Nguồn (`sàn` / `server` / `bot`). API: `POST|DELETE|GET /api/sltp`, `GET /api/sltp/status`, `POST /api/sltp/monitor`.
+
 ## Giao diện (UI Streamlit)
 ```bash
 uv run streamlit run src/paper_bot/ui/app.py

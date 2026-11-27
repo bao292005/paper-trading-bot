@@ -108,4 +108,5 @@ window.addEventListener("DOMContentLoaded", () => {
   initPositionBox();
   initPositionDrag();
   initPositionOrders();
+  initSltp();
 });

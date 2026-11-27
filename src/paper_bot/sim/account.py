@@ -113,6 +113,29 @@ class PracticeAccount:
         o.price = price if o.type != "market" else None
         return o
 
+    def set_position_sltp(self, sl=None, tp=None) -> List[Order]:
+        """Gắn/sửa/gỡ SL/TP cho CẢ vị thế đang có (kể cả vị thế mở không kèm SL/TP).
+        Huỷ mọi lệnh con SL/TP đang chờ rồi tạo 1 cặp mới (OCO) cho toàn bộ |qty|; sl = tp = None -> chỉ gỡ.
+        Có hiệu lực từ nến bắt đầu >= con trỏ hiện tại (không nhìn lại quá khứ)."""
+        if self.side is None:
+            raise ValueError("không có vị thế để gắn SL/TP")
+        sl, tp = clean_price(sl, "sl"), clean_price(tp, "tp")
+        if self.last_price is not None:
+            check_bracket(sl, tp, self.last_price, self.side)
+        for o in self.orders.values():
+            if o.status == "pending" and o.role in ("sl", "tp"):
+                o.status, o.note = "cancelled", "thay bằng SL/TP mới của vị thế"
+        self._seq += 1
+        parent, exit_side, out = f"pos{self._seq}", "sell" if self.qty > 0 else "buy", []
+        for role, lvl, typ in (("sl", sl, "stop"), ("tp", tp, "limit")):
+            if lvl is not None:
+                self._seq += 1
+                kid = Order(f"o{self._seq}", exit_side, typ, abs(self.qty), lvl, created=self.cursor, role=role,
+                            parent=parent, reduce=True)
+                self.orders[kid.id] = kid
+                out.append(kid)
+        return out
+
     def close_position(self) -> Optional[Order]:
         """Đóng vị thế = lệnh market ngược chiều toàn bộ (khớp ở open nến 1m kế tiếp)."""
         if abs(self.qty) <= EPS:

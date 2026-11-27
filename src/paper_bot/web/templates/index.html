@@ -105,6 +105,19 @@
             <button type="button" id="pos-discard">Xoá box</button>
           </div>
         </div>
+        <div id="sltp-edit" hidden>
+          <div id="sltp-title" class="small"></div>
+          <div class="form-grid">
+            <label>Stop loss <input id="sltp-sl" type="number" min="0" step="any"></label>
+            <label>Take profit <input id="sltp-tp" type="number" min="0" step="any"></label>
+          </div>
+          <div class="bot-buttons">
+            <button type="button" id="sltp-apply" class="primary">Áp dụng</button>
+            <button type="button" id="sltp-remove" class="danger">Gỡ SL/TP</button>
+            <button type="button" id="sltp-close">Đóng box</button>
+          </div>
+          <div id="sltp-note" class="small muted"></div>
+        </div>
         <div id="pos-msg" class="small muted"></div>
       </section>
       <section class="card practice practice-only tab-account">
@@ -155,6 +168,8 @@
       </section>
       <section class="card real-only tab-account">
         <h3>Vị thế</h3>
+        <div class="small sltp-status-row"><span id="sltp-status" class="muted">Server canh SL/TP: đang đọc…</span>
+          <button type="button" id="sltp-toggle" class="mini" title="Bật/tắt server tự canh SL/TP crypto (cần XAC NHAN)">Bật/Tắt</button></div>
         <div id="positions" class="muted">Đang tải…</div>
       </section>
       <section class="card real-only tab-account">
@@ -233,6 +248,9 @@
   <script src="/static/js/position_drag.js"></script>
   <script src="/static/js/position_orders.js"></script>
   <script src="/static/js/position_sync.js"></script>
+  <script src="/static/js/sltp_math.js"></script>
+  <script src="/static/js/sltp_panel.js"></script>
+  <script src="/static/js/sltp.js"></script>
   <script src="/static/js/main.js"></script>
 </body>
 </html>
