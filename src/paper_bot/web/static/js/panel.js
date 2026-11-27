@@ -1,4 +1,4 @@
-// Panel phải: tài khoản, vị thế, lệnh chờ (tự làm mới 15s) + price line cho mã đang xem.
+// Panel phải: tài khoản, vị thế, lệnh chờ (tự làm mới 10s) + price line cho mã đang xem.
 const PANEL = { account: null, positions: [], orders: [], timer: null };
 
 function showErr(id, e) {
@@ -72,22 +72,13 @@ async function refreshOrders() {
 // Price line cho mã đang xem: giá vào (xanh dương), SL (đỏ), TP (xanh lá), lệnh chờ khác (cam)
 function updatePriceLines() {
   if (typeof RP !== "undefined" && RP.on) { practiceRefreshChart(); return; }  // replay: đường giá của tài khoản luyện tập
-  const items = [];
-  const pos = PANEL.positions.find((p) => p.symbol === CH.symbol);
-  if (pos) items.push({ price: pos.avg_entry_price, color: "#2196f3", title: `Vào ${fmt.qty(pos.qty)}` });
-  for (const o of PANEL.orders.filter((x) => x.symbol === CH.symbol)) {
-    const price = orderPrice(o);
-    if (price === null || price === undefined) continue;
-    const exit = pos && o.side === (pos.qty < 0 ? "buy" : "sell");  // lệnh đóng: long = bán, short = mua
-    if (exit && o.stop_price !== null) items.push({ price, color: "#ef5350", title: "SL", dashed: true });
-    else if (exit) items.push({ price, color: "#26a69a", title: "TP", dashed: true });
-    else items.push({ price, color: "#ff9800", title: `Chờ ${o.side} ${o.type}`, dashed: true });
-  }
-  setPriceLines(items);
+  // giá vốn vị thế (nét liền) + lệnh chờ (nét đứt), bỏ cái đã có box Long/Short; công tắc "Lệnh của tôi" tắt = không vẽ
+  setPriceLines(MF.on ? FL.items(CH.symbol, PANEL.positions, PANEL.orders, typeof PB !== "undefined" ? PB.boxes : []) : []);
 }
 
 async function refreshPanel() {
   const sl = typeof sltpRefresh === "function" ? sltpRefresh() : null;  // mức SL/TP cho cột của bảng vị thế
+  mfRefresh();  // lệnh đã khớp mới -> mũi tên + toast
   await Promise.all([refreshAccount(), sl ? sl.then(refreshPositions) : refreshPositions(), refreshOrders()]);
   updatePriceLines();
   if (typeof posSyncReal === "function") posSyncReal();
@@ -107,5 +98,5 @@ function initPanel() {
     });
   }
   refreshPanel();
-  PANEL.timer = setInterval(refreshPanel, 15000);
+  PANEL.timer = setInterval(refreshPanel, 10000);
 }

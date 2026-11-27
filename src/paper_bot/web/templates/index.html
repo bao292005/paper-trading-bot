@@ -29,6 +29,9 @@
       <label><input type="checkbox" id="chk-vol" checked> Volume</label>
     </div>
     <div class="group">
+      <label title="Hiện lệnh đã khớp, lệnh chờ và giá vốn vị thế của tài khoản Alpaca trên chart"><input type="checkbox" id="chk-myfills" checked> Lệnh của tôi</label>
+    </div>
+    <div class="group">
       <label>Bot <select id="run-select"><option value="">(không hiện)</option></select></label>
     </div>
     <div class="group">
@@ -52,6 +55,7 @@
       <div id="legend"></div>
       <div id="chart"></div>
       <div id="tooltip" hidden></div>
+      <div id="toast-box"></div>
       <div id="zoombar" class="zoombar" title="Shift + kéo để phóng vùng">
         <span class="zhint">Shift + kéo để phóng vùng</span>
         <select id="z-mode" data-z="mode" title="Trục giá: Thường / Log (phím L) / %"><option value="normal">Thường</option><option value="log">Log</option><option value="percent">%</option></select>
@@ -204,7 +208,7 @@
         </div>
         <pre id="bot-output" hidden></pre>
       </section>
-      <div class="muted small real-only tab-account" id="refresh-note">Tự làm mới mỗi 15 giây</div>
+      <div class="muted small real-only tab-account" id="refresh-note">Tự làm mới mỗi 10 giây</div>
     </aside>
   </main>
 
@@ -228,7 +232,10 @@
   <script src="/static/js/pricescale.js"></script>
   <script src="/static/js/zoombox.js"></script>
   <script src="/static/js/zoom.js"></script>
+  <script src="/static/js/fills_math.js"></script>
+  <script src="/static/js/fills_lines.js"></script>
   <script src="/static/js/legend.js"></script>
+  <script src="/static/js/fills.js"></script>
   <script src="/static/js/data.js"></script>
   <script src="/static/js/indicators_live.js"></script>
   <script src="/static/js/live.js"></script>

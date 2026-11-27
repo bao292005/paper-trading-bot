@@ -1,5 +1,20 @@
 # Nhật ký web app (agent j-web)
 
+## Lệnh của tôi trên chart (agent j-fills, 2026-11-27)
+- **API (chỉ đọc)** `GET /api/account/fills?symbol=&asset=&since=` (`web/api/account_fills.py`): `get_orders(status=closed, nested=True, limit=500)`,
+  giữ lệnh `filled_qty > 0`, bung chân bracket/OCO; `since` = unix giây/ISO (mặc định 30 ngày; `after` gửi Alpaca lùi thêm 7 ngày cho lệnh GTC cũ).
+  Mã crypto chuẩn hoá `ETHUSD` -> `ETH/USD`. Cache 10 giây theo (mã, asset, since). Thiếu key -> 503, lỗi Alpaca -> 502. Không gửi/huỷ lệnh.
+- **Nguồn** (ưu tiên từ trên xuống): `bracket TP/SL`, `OCO TP/SL` (theo order_class + loại chân) > `server SL/TP` (event `sltp_hit` trùng order_id)
+  > `web` (event `web_manual_order`/`web_position_order`/`web_close_position` cách giờ gửi lệnh <= 10s, cùng mã) > `bot` (order_id trong bảng `orders`, run `live-*`) > `khác (dashboard Alpaca)`.
+- **Chart** (`fills_math.js`, `fills_lines.js` = hàm thuần; `fills.js` = nối DOM): mũi tên mua ▲ xanh / bán ▼ đỏ tại nến chứa giờ khớp (snap theo nến đã tải,
+  đúng mọi khung/múi giờ), nhãn `B 0.02 @1722.8`, TP/SL ghi `TP`/`SL`. Tooltip: giờ (theo `CH.tz`), hướng, qty, giá, loại, nguồn, P/L FIFO của lệnh đóng.
+  Gộp chung với marker của Bot thành 1 danh sách (chart chỉ cho 1 bộ marker/series). Không hiện khi Replay.
+- **Đường giá**: vị thế = nét liền xanh `Vị thế 0.02 @1722.75`; lệnh chờ = nét đứt `BUY LMT 0.02`; cái đã có box Long/Short thì không vẽ trùng.
+- **Tự cập nhật**: panel làm mới 10s (trước 15s) và gọi lại fills + orders; lệnh khớp mới -> marker ngay + toast 6s
+  (`✅ Đã khớp MUA 0.02 ETH/USD @1722.75`, `🎯 TP khớp ...`, `🛑 SL khớp ...`), không báo lại id đã báo; lần tải đầu chỉ ghi nhớ.
+- **Công tắc** "Lệnh của tôi" (mặc định bật, nhớ trong localStorage `ptb.myFills`). Kéo về quá khứ -> `since` lùi theo nến cũ nhất.
+- Test: `tests/test_web_fills.py` (API), `tests/test_web_fills_js.py` (node). Hạn chế: lệnh đóng vị thế mở TRƯỚC khoảng đã tải không có lô để ghép P/L.
+
 ## SL/TP cho mọi vị thế (agent j-sltp, 2026-11-27)
 Nút **SL/TP** trên từng dòng vị thế (thật + luyện tập) -> box vị thế hiện trên chart đúng mã, entry = giá vốn TB, SL/TP = mức đang có
 (chưa có: ±2×ATR / 3×ATR). Kéo hoặc nhập số -> **Áp dụng** (thật: XAC NHAN) / **Gỡ SL/TP** (thật: XAC NHAN).

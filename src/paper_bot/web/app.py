@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .. import dashboard
 from ..data.intraday import load_intraday
-from .api import live, markers, market, orders, practice, replay, sltp, tester, trading
+from .api import account_fills, live, markers, market, orders, practice, replay, sltp, tester, trading
 from .hub import LiveHub, ny_now, utc_now
 from .jobs import JobManager
 from .sltp_monitor import SLTPMonitor
@@ -68,7 +68,7 @@ def create_app(load_intraday_fn=None, trading_client_fn=None, db_path=None,
     state.sltp_monitor = SLTPMonitor(state.trading_client_fn, price_fn=sltp_price_fn, state_path=live_state_path,
                                      db_path=state.db_path, interval=SLTP_INTERVAL)
 
-    for module in (market, trading, orders, markers, live, tester, replay, practice, sltp):
+    for module in (market, trading, orders, markers, live, tester, replay, practice, sltp, account_fills):
         app.include_router(module.router)
 
     @app.get("/", include_in_schema=False)

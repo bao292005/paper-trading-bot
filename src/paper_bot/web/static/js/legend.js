@@ -22,6 +22,13 @@ function tooltipHtml(items) {
       return `<b>${t.side === "buy" ? "Mua" : "Bán"} khớp</b> ${esc(t.qty)} @ ${fmt.num(t.price)}<br>` +
         `<span class="muted">${esc(t.filled_at)}</span>`;
     }
+    if (m.kind === "myfill") {  // lệnh đã khớp của tài khoản Alpaca
+      const pnl = t.pnl === null || t.pnl === undefined ? "" :
+        `<br>P/L <span class="${fmt.cls(t.pnl)}">${t.pnl >= 0 ? "+" : ""}${fmt.num(t.pnl)}</span>`;
+      return `<b>${t.side === "buy" ? "Mua" : "Bán"} khớp</b> ${esc(FM.q(t.qty))} @ ${esc(FM.p2(t.price))}<br>` +
+        `<span class="muted">${esc(nyDay(t.time) + " " + nyClock(t.time))} (${esc(TZ_CHOICES[CH.tz])})</span><br>` +
+        `Loại ${esc(t.type)} · Nguồn ${esc(t.source_text)}${pnl}`;
+    }
     const prob = t.prob === null || t.prob === undefined ? "-" : fmt.num(t.prob, 3);
     return `<b>Tín hiệu ${esc(t.action)}</b> (${esc(t.strategy)})<br>` +
       `giá ${fmt.num(t.price)} · confidence ${fmt.num(t.confidence, 2)} · prob ${prob}<br>` +

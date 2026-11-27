@@ -84,7 +84,8 @@ function bindToolbar() {
   const tzSel = document.getElementById("tz-select");
   tzSel.innerHTML = Object.entries(TZ_CHOICES).map(([v, t]) => `<option value="${esc(v)}">${esc(t)}</option>`).join("");
   tzSel.value = CH.tz;
-  tzSel.addEventListener("change", (ev) => { setChartTz(ev.target.value); refreshLegend(); });
+  tzSel.addEventListener("change", (ev) => { setChartTz(ev.target.value); refreshLegend(); mfRender(); });
+  initFills();
 }
 
 window.addEventListener("DOMContentLoaded", () => {

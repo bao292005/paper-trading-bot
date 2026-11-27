@@ -39,6 +39,7 @@ async function loadAll(keepRange) {
     if (seq === D.seq) setLoadStatus(e.message, true);
   }
   loadMarkers();
+  if (typeof mfRefresh === "function") mfRefresh();  // lệnh đã khớp của tôi cho mã/khung mới
 }
 
 // Kéo sát mép trái -> tải đoạn cũ hơn và nối vào đầu, giữ nguyên vị trí đang xem
@@ -63,6 +64,7 @@ async function loadOlder() {
       CH.chart.timeScale().setVisibleLogicalRange(ZM.shiftRange(range, b.bars.length));
     }
     setLoadStatus("");
+    if (typeof mfRefresh === "function") mfRefresh();  // since lùi theo nến cũ nhất -> tải thêm lệnh cũ
   } catch (e) {
     setLoadStatus(e.message, true);
   } finally {
@@ -70,14 +72,21 @@ async function loadOlder() {
   }
 }
 
+// Markers của bot: hợp nhất với mũi tên "Lệnh của tôi" (fills.js) vì chart chỉ có 1 bộ marker
+function setRunMarkers(list) {
+  if (typeof MF === "undefined") { setMarkers(list); return; }
+  MF.run = list;
+  mfRender();
+}
+
 async function loadMarkers() {
   if (typeof RP !== "undefined" && RP.on) { practiceRefreshChart(); return; }  // replay: chỉ hiện lệnh luyện tập
-  if (!D.runId) { setMarkers([]); return; }
+  if (!D.runId) { setRunMarkers([]); return; }
   try {
     const m = await getJSON("/api/markers", { symbol: CH.symbol, run_id: D.runId, tf: CH.tf, asset: CH.asset });
-    setMarkers([...m.signals, ...m.fills]);
+    setRunMarkers([...m.signals, ...m.fills]);
   } catch (e) {
-    setMarkers([]);
+    setRunMarkers([]);
     setLoadStatus("Markers: " + e.message, true);
   }
 }

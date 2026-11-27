@@ -118,6 +118,11 @@ Tua lại biểu đồ như TradingView Bar Replay và giao dịch giả lập t
   Dòng "Server canh SL/TP ● (kiểm cách đây Xs)" + nút Bật/Tắt. Tắt server = không canh.
 - Panel có cột SL / TP / Nguồn (`sàn` / `server` / `bot`). API: `POST|DELETE|GET /api/sltp`, `GET /api/sltp/status`, `POST /api/sltp/monitor`.
 
+### Lệnh của tôi trên chart
+- Công tắc **Lệnh của tôi** (mặc định bật): lệnh đã khớp của tài khoản Alpaca hiện thành mũi tên ▲/▼ (`B 0.02 @1722.8`, TP/SL ghi `TP`/`SL`),
+  hover xem giờ/qty/giá/loại/nguồn/P/L; lệnh chờ = nét đứt, giá vốn vị thế = nét liền. Tự cập nhật mỗi 10 giây, lệnh khớp mới có toast 6 giây.
+  API chỉ đọc: `GET /api/account/fills`. Chi tiết: `docs/cai-tien/WEB.md`.
+
 ## Giao diện (UI Streamlit)
 ```bash
 uv run streamlit run src/paper_bot/ui/app.py
